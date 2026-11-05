@@ -327,7 +327,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 3. BET (Real Touch Events with Sequential Stagger)
+    // 3. BET (The 51 Individual Odds Buttons Formula)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -338,7 +338,7 @@ class MainActivity : AppCompatActivity() {
         val rawPattern = patternsList[currentIndex % patternsList.size]
         val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
 
-        // Map H/1 -> 0, D/X -> 1, A/2 -> 2
+        // 13 picks: H/1 -> 0, D/X -> 1, A/2 -> 2
         val picks13 = clean.take(13).map { char ->
             when (char) {
                 'H', '1' -> 0
@@ -365,56 +365,42 @@ class MainActivity : AppCompatActivity() {
 
         val betJs = """
             (function() {
-                const picks = $picksJsArray; // 17 picks
+                const picks = $picksJsArray; // 17 picks (0, 1, or 2)
 
-                // Dispatches real mobile touch events to any element
-                function forceTap(el) {
-                    if (!el) return;
-                    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(name => {
-                        try {
-                            el.dispatchEvent(new MouseEvent(name, { bubbles: true, cancelable: true, view: window }));
-                        } catch(e) {
-                            try { el.dispatchEvent(new Event(name, { bubbles: true })); } catch(e2) {}
-                        }
-                    });
-                    try { el.click(); } catch(e) {}
+                // Find only the individual odds boxes (contain WIN or DRAW, but NEVER both!)
+                const oddsBoxes = Array.from(document.querySelectorAll('button, div')).filter(el => {
+                    let txt = (el.innerText || '').trim();
+                    let hasWin = txt.includes('WIN');
+                    let hasDraw = txt.includes('DRAW');
+                    let isSingleOdd = (hasWin && !hasDraw) || (hasDraw && !hasWin);
+                    let hasOddsNumber = /\d+\.\d+/.test(txt);
+                    // Match the inner clickable button box
+                    return isSingleOdd && hasOddsNumber && el.children.length > 0 && el.children.length <= 3;
+                });
+
+                if (oddsBoxes.length < 51) {
+                    return "WAIT: Found " + oddsBoxes.length + " buttons (Need 51). Wait 2s and tap 3. BET again!";
                 }
 
-                // Find all 17 match rows
-                const matchRows = Array.from(document.querySelectorAll('div')).filter(row => {
-                    if (row.children.length === 3) {
-                        let t0 = (row.children[0].innerText || '').trim();
-                        let t1 = (row.children[1].innerText || '').trim();
-                        let t2 = (row.children[2].innerText || '').trim();
-                        return (t0.includes('WIN') && t1.includes('DRAW') && t2.includes('WIN'));
+                // Click each of the 17 matches
+                for (let i = 0; i < 17; i++) {
+                    let chosen = picks[i];
+                    let targetIndex = (i * 3) + chosen;
+                    let box = oddsBoxes[targetIndex];
+                    if (box) {
+                        box.click();
+                        // Also trigger any inner element
+                        if (box.firstElementChild) box.firstElementChild.click();
                     }
-                    return false;
-                });
-
-                if (matchRows.length < 17) {
-                    return "WAIT: Found only " + matchRows.length + " matches. Wait 2 seconds and tap 3. BET again!";
                 }
 
-                // Sequentially tap all 17 matches with 35ms stagger
-                picks.forEach((chosenOutcome, i) => {
-                    setTimeout(() => {
-                        let row = matchRows[i];
-                        if (row && row.children[chosenOutcome]) {
-                            let target = row.children[chosenOutcome];
-                            forceTap(target);
-                            // Tap all child elements inside the box (labels & odds numbers)
-                            target.querySelectorAll('*').forEach(child => forceTap(child));
-                        }
-                    }, i * 35);
-                });
-
-                // Place Bet after all 17 matches are tapped (17 * 35ms = ~600ms + buffer)
-                setTimeout(() => {
+                // Click Place Bet after 800ms
+                setTimeout(function() {
                     let placeBetBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').includes('Place bet'));
-                    if (placeBetBtn) forceTap(placeBetBtn);
-                }, 1100);
+                    if (placeBetBtn) placeBetBtn.click();
+                }, 800);
 
-                return "APPLIED: " + "$clean".substring(0, 13);
+                return "SUCCESS: Selected all 17 (" + "$clean".substring(0, 13) + ")";
             })();
         """.trimIndent()
 
