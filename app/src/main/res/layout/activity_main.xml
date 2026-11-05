@@ -15,19 +15,21 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Acc: #0/0 | Tap DATA"
+            android:text="Acc: #0/0 | Tap ⚙️ DATA"
             android:textColor="#FFCC00"
             android:textSize="12sp"
             android:textStyle="bold" />
         <Button
             android:id="@+id/btnDataMenu"
             android:layout_width="wrap_content"
-            android:layout_height="36dp"
+            android:layout_height="38dp"
+            android:backgroundTint="#6F42C1"
             android:text="⚙️ DATA"
+            android:textColor="#FFFFFF"
             android:textSize="11sp" />
     </LinearLayout>
 
-    <!-- Status Bar -->
+    <!-- Real-time Status Bar -->
     <TextView
         android:id="@+id/tvStatus"
         android:layout_width="match_parent"
@@ -45,39 +47,48 @@
         android:layout_height="0dp"
         android:layout_weight="1" />
 
-    <!-- The 4 Instant Action Buttons -->
+    <!-- Colored Action Buttons -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:weightSum="4"
-        android:background="#000">
+        android:background="#000"
+        android:padding="2dp">
         <Button
             android:id="@+id/btnStep1"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:backgroundTint="#007BFF"
             android:text="1.LOGIN"
+            android:textColor="#FFFFFF"
             android:textSize="10sp" />
         <Button
             android:id="@+id/btnStep2"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:backgroundTint="#FF8800"
             android:text="2.MAHARA"
+            android:textColor="#FFFFFF"
             android:textSize="10sp" />
         <Button
             android:id="@+id/btnStep3"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:backgroundTint="#28A745"
             android:text="3.BET"
+            android:textColor="#FFFFFF"
             android:textSize="10sp" />
         <Button
             android:id="@+id/btnStep4"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:backgroundTint="#DC3545"
             android:text="4.NEXT"
+            android:textColor="#FFFFFF"
             android:textSize="10sp" />
     </LinearLayout>
 </LinearLayout>
