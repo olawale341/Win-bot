@@ -25,8 +25,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var tvStatus: TextView
     private lateinit var tvAccountInfo: TextView
+    private lateinit var btnAutoRun: Button
     private lateinit var btnDataMenu: Button
-
     private lateinit var btnStep1: Button
     private lateinit var btnStep2: Button
     private lateinit var btnStep3: Button
@@ -34,11 +34,11 @@ class MainActivity : AppCompatActivity() {
 
     private var activeMaharaUrl = "https://winpesa.ng/games/Mahara-Jackpot-9192"
     private val handler = Handler(Looper.getMainLooper())
-
     private val numbersList = mutableListOf<String>()
     private val patternsList = mutableListOf<String>()
     private var currentIndex = 0
     private var commonPassword = "YourDefaultPassword123"
+    private var isAutoRunning = false
 
     private var filePickTarget: String = "NUMBERS"
     private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -52,8 +52,8 @@ class MainActivity : AppCompatActivity() {
 
         tvStatus = findViewById(R.id.tvStatus)
         tvAccountInfo = findViewById(R.id.tvAccountInfo)
+        btnAutoRun = findViewById(R.id.btnAutoRun)
         btnDataMenu = findViewById(R.id.btnDataMenu)
-
         btnStep1 = findViewById(R.id.btnStep1)
         btnStep2 = findViewById(R.id.btnStep2)
         btnStep3 = findViewById(R.id.btnStep3)
@@ -63,6 +63,7 @@ class MainActivity : AppCompatActivity() {
         setupWebView()
         loadPersistedData()
 
+        btnAutoRun.setOnClickListener { toggleAutoRun() }
         btnDataMenu.setOnClickListener { showDataManagementMenu() }
         btnStep1.setOnClickListener { runStep1_Login() }
         btnStep2.setOnClickListener { runStep2_OpenMahara() }
@@ -81,8 +82,6 @@ class MainActivity : AppCompatActivity() {
         s.cacheMode = WebSettings.LOAD_DEFAULT
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         s.userAgentString = s.userAgentString.replace("; wv", "")
-
-        // Hardware Acceleration for smooth page transitions
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         webView.webChromeClient = WebChromeClient()
@@ -90,35 +89,40 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 tvStatus.text = "Loaded: $url"
-
-                if (url != null && url.contains("winpesa.ng")) {
-                    detectDynamicMaharaLink()
-                }
+                if (url != null && url.contains("winpesa.ng")) detectDynamicMaharaLink()
             }
         }
         webView.loadUrl("https://winpesa.ng")
     }
 
-    private fun detectDynamicMaharaLink() {
-        val detectJs = """
-            (function() {
-                let link = Array.from(document.querySelectorAll('a, div')).find(el => {
-                    let href = el.getAttribute('href') || '';
-                    return href.includes('Mahara-Jackpot');
-                });
-                if (link) {
-                    let href = link.getAttribute('href');
-                    return href.startsWith('http') ? href : ('https://winpesa.ng' + href);
-                }
-                return null;
-            })();
-        """.trimIndent()
+    // ========================================================
+    // AUTO-RUN CONTROLLER (Play / Pause Engine)
+    // ========================================================
+    private fun toggleAutoRun() {
+        if (numbersList.isEmpty()) {
+            Toast.makeText(this, "Load numbers first via ⚙️ DATA!", Toast.LENGTH_SHORT).show()
+            return
+        }
 
-        webView.evaluateJavascript(detectJs) { result ->
-            val clean = result?.replace("\"", "")?.trim()
-            if (!clean.isNullOrEmpty() && clean != "null" && clean.contains("Mahara-Jackpot")) {
-                activeMaharaUrl = clean
-            }
+        if (isAutoRunning) {
+            isAutoRunning = false
+            btnAutoRun.text = "▶️ AUTO"
+            btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_green_dark)
+            tvStatus.text = "⏸️ Auto-Run Paused."
+        } else {
+            isAutoRunning = true
+            btnAutoRun.text = "⏸️ PAUSE"
+            btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_red_dark)
+            tvStatus.text = "▶️ Auto-Run Started..."
+            runStep1_Login()
+        }
+    }
+
+    private fun detectDynamicMaharaLink() {
+        val js = "(function(){ let l = Array.from(document.querySelectorAll('a,div')).find(e => (e.getAttribute('href')||'').includes('Mahara-Jackpot')); return l ? (l.getAttribute('href').startsWith('http') ? l.getAttribute('href') : 'https://winpesa.ng'+l.getAttribute('href')) : null; })()"
+        webView.evaluateJavascript(js) { res ->
+            val clean = res?.replace("\"", "")?.trim()
+            if (!clean.isNullOrEmpty() && clean != "null" && clean.contains("Mahara-Jackpot")) activeMaharaUrl = clean
         }
     }
 
@@ -130,9 +134,6 @@ class MainActivity : AppCompatActivity() {
         return p
     }
 
-    // ========================================================
-    // ⚙️ DATA MANAGEMENT MENU (With Wipe All Data Feature)
-    // ========================================================
     private fun showDataManagementMenu() {
         val options = arrayOf(
             "📱 Numbers: Paste Text",
@@ -144,7 +145,6 @@ class MainActivity : AppCompatActivity() {
             "🔄 Reset Progress to Account #1",
             "🗑️ WIPE ALL (Clear Numbers, Patterns & Reset)"
         )
-
         AlertDialog.Builder(this)
             .setTitle("⚙️ Data Manager")
             .setItems(options) { _, which ->
@@ -155,12 +155,7 @@ class MainActivity : AppCompatActivity() {
                     3 -> { filePickTarget = "PATTERNS"; filePickerLauncher.launch("text/*") }
                     4 -> showPasswordDialog()
                     5 -> showJumpToAccountDialog()
-                    6 -> {
-                        currentIndex = 0
-                        saveData()
-                        updateUI()
-                        Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show()
-                    }
+                    6 -> { currentIndex = 0; saveData(); updateUI(); Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show() }
                     7 -> confirmWipeAllData()
                 }
             }
@@ -168,23 +163,17 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // Completely wipes all data for a new batch
     private fun confirmWipeAllData() {
         AlertDialog.Builder(this)
             .setTitle("🗑️ Wipe All Data?")
-            .setMessage("This will delete all saved phone numbers, patterns, and reset progress to #0 so you can start a fresh batch. Continue?")
+            .setMessage("Delete all saved numbers, patterns and reset progress?")
             .setPositiveButton("Yes, Wipe All") { _, _ ->
                 numbersList.clear()
                 patternsList.clear()
                 currentIndex = 0
-
-                val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
-                prefs.edit().clear().apply()
-
-                saveData()
-                updateUI()
+                getSharedPreferences("winpesa_bot", MODE_PRIVATE).edit().clear().apply()
+                saveData(); updateUI()
                 tvStatus.text = "All data cleared! Ready for new batch."
-                Toast.makeText(this, "Cleaned up completely!", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -192,48 +181,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun showJumpToAccountDialog() {
         val input = EditText(this)
-        input.hint = "Enter number e.g. 50"
+        input.hint = "Account number e.g. 50"
         AlertDialog.Builder(this)
             .setTitle("Jump to Account #")
             .setView(input)
             .setPositiveButton("Go") { _, _ ->
                 val num = input.text.toString().trim().toIntOrNull()
                 if (num != null && num in 1..numbersList.size) {
-                    currentIndex = num - 1
-                    saveData()
-                    updateUI()
+                    currentIndex = num - 1; saveData(); updateUI()
                     Toast.makeText(this, "Jumped to #$num", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, "Invalid account number", Toast.LENGTH_SHORT).show()
                 }
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            .setNegativeButton("Cancel", null).show()
     }
 
     private fun showPasteDialog(type: String) {
         val input = EditText(this)
         input.setLines(8)
-        input.hint = if (type == "NUMBERS") "Paste phone numbers (one per line)" else "Paste patterns (one per line, e.g. HDAHHDAHDAHDA)"
-
+        input.hint = if (type == "NUMBERS") "Paste numbers (one per line)" else "Paste patterns (one per line)"
         AlertDialog.Builder(this)
-            .setTitle(if (type == "NUMBERS") "Paste Phone Numbers" else "Paste Patterns")
+            .setTitle(if (type == "NUMBERS") "Paste Numbers" else "Paste Patterns")
             .setView(input)
             .setPositiveButton("Save") { _, _ ->
                 val lines = input.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-                if (type == "NUMBERS") {
-                    numbersList.clear()
-                    numbersList.addAll(lines.map { sanitizePhone(it) })
-                } else {
-                    patternsList.clear()
-                    patternsList.addAll(lines)
-                }
-                saveData()
-                updateUI()
+                if (type == "NUMBERS") { numbersList.clear(); numbersList.addAll(lines.map { sanitizePhone(it) }) }
+                else { patternsList.clear(); patternsList.addAll(lines) }
+                saveData(); updateUI()
                 Toast.makeText(this, "Saved ${lines.size} items!", Toast.LENGTH_SHORT).show()
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            .setNegativeButton("Cancel", null).show()
     }
 
     private fun handleUploadedFile(uri: Uri) {
@@ -242,22 +218,14 @@ class MainActivity : AppCompatActivity() {
                 contentResolver.openInputStream(uri)?.use { stream ->
                     val lines = stream.bufferedReader().readLines().map { it.trim() }.filter { it.isNotEmpty() }
                     runOnUiThread {
-                        if (filePickTarget == "NUMBERS") {
-                            numbersList.clear()
-                            numbersList.addAll(lines.map { sanitizePhone(it) })
-                        } else {
-                            patternsList.clear()
-                            patternsList.addAll(lines)
-                        }
-                        saveData()
-                        updateUI()
-                        Toast.makeText(this, "Loaded ${lines.size} items safely!", Toast.LENGTH_SHORT).show()
+                        if (filePickTarget == "NUMBERS") { numbersList.clear(); numbersList.addAll(lines.map { sanitizePhone(it) }) }
+                        else { patternsList.clear(); patternsList.addAll(lines) }
+                        saveData(); updateUI()
+                        Toast.makeText(this, "Loaded ${lines.size} items!", Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {
-                runOnUiThread {
-                    Toast.makeText(this, "Error reading file: ${e.message}", Toast.LENGTH_LONG).show()
-                }
+                runOnUiThread { Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show() }
             }
         }.start()
     }
@@ -267,23 +235,19 @@ class MainActivity : AppCompatActivity() {
         input.setText(commonPassword)
         AlertDialog.Builder(this)
             .setTitle("🔑 Common Password")
-            .setMessage("Set the password used across all phone numbers:")
             .setView(input)
             .setPositiveButton("Save") { _, _ ->
                 commonPassword = input.text.toString().trim()
-                saveData()
-                Toast.makeText(this, "Password saved!", Toast.LENGTH_SHORT).show()
+                saveData(); Toast.makeText(this, "Saved!", Toast.LENGTH_SHORT).show()
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            .setNegativeButton("Cancel", null).show()
     }
 
     private fun updateUI() {
         val numCount = numbersList.size
         val patCount = patternsList.size
-
         if (numCount == 0) {
-            tvAccountInfo.text = "Acc: #0/0 | Tap ⚙️ DATA to load"
+            tvAccountInfo.text = "Acc: #0/0 | Tap DATA"
         } else {
             val phone = numbersList.getOrElse(currentIndex) { "None" }
             val pattern = if (patCount > 0) patternsList[currentIndex % patCount] else "None"
@@ -305,18 +269,10 @@ class MainActivity : AppCompatActivity() {
         val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
         commonPassword = prefs.getString("password", "YourDefaultPassword123") ?: "YourDefaultPassword123"
         currentIndex = prefs.getInt("index", 0)
-
         val nums = prefs.getString("numbers", "") ?: ""
-        if (nums.isNotEmpty()) {
-            numbersList.clear()
-            numbersList.addAll(nums.split("\n").map { sanitizePhone(it) })
-        }
-
+        if (nums.isNotEmpty()) { numbersList.clear(); numbersList.addAll(nums.split("\n").map { sanitizePhone(it) }) }
         val pats = prefs.getString("patterns", "") ?: ""
-        if (pats.isNotEmpty()) {
-            patternsList.clear()
-            patternsList.addAll(pats.split("\n"))
-        }
+        if (pats.isNotEmpty()) { patternsList.clear(); patternsList.addAll(pats.split("\n")) }
         updateUI()
     }
 
@@ -325,69 +281,54 @@ class MainActivity : AppCompatActivity() {
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
-            tvStatus.text = "Error: Load phone numbers first via ⚙️ DATA"
+            tvStatus.text = "Error: Load phone numbers first!"
+            if (isAutoRunning) toggleAutoRun()
             return
         }
 
         val phone = numbersList[currentIndex]
         tvStatus.text = "Step 1: Logging in $phone..."
 
-        val loginScript = """
+        val script = """
             (function() {
-                function setReactInput(input, value) {
-                    let lastValue = input.value;
-                    input.value = value;
-                    let event = new Event('input', { bubbles: true });
-                    let tracker = input._valueTracker;
-                    if (tracker) tracker.setValue(lastValue);
-                    input.dispatchEvent(event);
+                function setReact(input, val) {
+                    let old = input.value; input.value = val;
+                    let trk = input._valueTracker; if (trk) trk.setValue(old);
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
                     input.dispatchEvent(new Event('change', { bubbles: true }));
                 }
-
-                let closeBtns = Array.from(document.querySelectorAll('button, div, span, svg, i')).filter(el => {
-                    let txt = (el.innerText || '').trim();
-                    let cls = (el.className || '').toString().toLowerCase();
-                    return txt === '×' || txt === 'X' || cls.includes('close');
+                Array.from(document.querySelectorAll('button, div, span, svg, i')).forEach(e => {
+                    let t = (e.innerText||'').trim(); if (t === '×' || t === 'X') e.click();
                 });
-                if (closeBtns.length > 0) closeBtns[0].click();
-
-                let phoneInput = document.querySelector('input[placeholder*="Phone"], input[type="tel"], input[name*="phone"]');
-                let passInput = document.querySelector('input[placeholder*="Password"], input[type="password"]');
-
-                if (phoneInput && passInput) {
-                    setReactInput(phoneInput, '$phone');
-                    setReactInput(passInput, '$commonPassword');
-
-                    setTimeout(function() {
-                        let submitBtn = Array.from(document.querySelectorAll('button, div[role="button"]'))
-                            .find(el => el.innerText && el.innerText.trim() === 'LOGIN' && el.offsetWidth > 100);
-                        if (submitBtn) submitBtn.click();
-                    }, 500);
-
-                    return "TYPED_AND_SUBMITTED";
+                let p = document.querySelector('input[placeholder*="Phone"], input[type="tel"], input[name*="phone"]');
+                let pass = document.querySelector('input[placeholder*="Password"], input[type="password"]');
+                if (p && pass) {
+                    setReact(p, '$phone'); setReact(pass, '$commonPassword');
+                    setTimeout(() => {
+                        let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => (b.innerText||'').trim() === 'LOGIN' && b.offsetWidth > 100);
+                        if (btn) btn.click();
+                    }, 400);
+                    return "SUBMITTED";
                 } else {
-                    let headerLoginBtn = Array.from(document.querySelectorAll('button, a, div'))
-                        .find(el => el.innerText && el.innerText.trim() === 'LOGIN');
-                    if (headerLoginBtn) {
-                        headerLoginBtn.click();
-                        return "OPENED_MODAL";
-                    }
+                    let h = Array.from(document.querySelectorAll('button, a, div')).find(e => (e.innerText||'').trim() === 'LOGIN');
+                    if (h) { h.click(); return "OPENED"; }
                     return "NOT_FOUND";
                 }
             })();
         """.trimIndent()
 
-        webView.evaluateJavascript(loginScript) { result ->
-            if (result?.contains("OPENED_MODAL") == true) {
+        webView.evaluateJavascript(script) { res ->
+            if (res?.contains("OPENED") == true) {
                 handler.postDelayed({ runStep1_Login() }, 800)
-            } else if (result?.contains("TYPED_AND_SUBMITTED") == true) {
-                tvStatus.text = "Step 1: Logged in $phone! Ready for Step 2."
+            } else if (res?.contains("SUBMITTED") == true) {
+                tvStatus.text = "Step 1: Logged in $phone!"
+                if (isAutoRunning) handler.postDelayed({ runStep2_OpenMahara() }, 2000)
             }
         }
     }
 
     // ========================================================
-    // 2. MAHARA (With High Latency Auto-Retry)
+    // 2. MAHARA
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara..."
@@ -397,28 +338,22 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed(object : Runnable {
             override fun run() {
                 attempts++
-                val watcherJs = """
+                val js = """
                     (function() {
-                        let iframe = document.querySelector('iframe');
-                        if (iframe && iframe.src && iframe.src.includes('aggrhub.com')) {
-                            window.location.href = iframe.src;
-                            return "JUMPING_IFRAME";
-                        }
-                        let playBtn = Array.from(document.querySelectorAll('button, div, a')).find(el => (el.innerText || '').trim() === 'PLAY');
-                        if (playBtn) {
-                            playBtn.click();
-                            return "CLICKED_PLAY";
-                        }
-                        return "SEARCHING";
+                        let f = document.querySelector('iframe');
+                        if (f && f.src && f.src.includes('aggrhub.com')) { window.location.href = f.src; return "JUMP"; }
+                        let p = Array.from(document.querySelectorAll('button, div, a')).find(e => (e.innerText||'').trim() === 'PLAY');
+                        if (p) { p.click(); return "PLAY"; }
+                        return "WAIT";
                     })();
                 """.trimIndent()
 
-                webView.evaluateJavascript(watcherJs) { result ->
-                    if (result?.contains("JUMPING_IFRAME") == true) {
-                        tvStatus.text = "Step 2: Inside match screen! Ready for Step 3."
-                    } else if (attempts < 20) {
-                        // Checks up to 20 times (giving it plenty of time on slow mobile networks)
-                        handler.postDelayed(this, 750)
+                webView.evaluateJavascript(js) { res ->
+                    if (res?.contains("JUMP") == true) {
+                        tvStatus.text = "Step 2: Inside match board!"
+                        if (isAutoRunning) handler.postDelayed({ runStep3_PickAndBet() }, 2500)
+                    } else if (attempts < 22) {
+                        handler.postDelayed(this, 700)
                     }
                 }
             }
@@ -426,96 +361,80 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 3. BET (With Network Auto-Wait until 17 Matches Arrive)
+    // 3. BET (With Auto-Clicking Place Bet Watcher)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
-            tvStatus.text = "Error: Load patterns first via ⚙️ DATA"
+            tvStatus.text = "Error: Load patterns first!"
+            if (isAutoRunning) toggleAutoRun()
             return
         }
 
         val rawPattern = patternsList[currentIndex % patternsList.size]
         val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
-
         val safe13 = clean.take(13).toMutableList()
-        while (safe13.size < 13) {
-            safe13.add(listOf('H', 'D', 'A').random())
-        }
+        while (safe13.size < 13) safe13.add(listOf('H', 'D', 'A').random())
 
-        val picks13 = safe13.map { char ->
-            when (char) {
-                'H', '1' -> 0
-                'D', 'X' -> 1
-                'A', '2' -> 2
-                else -> 0
-            }
-        }
-
-        val final17Picks = if (clean.length >= 17) {
-            picks13 + clean.substring(13, 17).map { char ->
-                when (char) {
-                    'H', '1' -> 0
-                    'D', 'X' -> 1
-                    'A', '2' -> 2
-                    else -> 0
-                }
-            }
+        val picks13 = safe13.map { if (it == 'D' || it == 'X') 1 else if (it == 'A' || it == '2') 2 else 0 }
+        val final17 = if (clean.length >= 17) {
+            picks13 + clean.substring(13, 17).map { if (it == 'D' || it == 'X') 1 else if (it == 'A' || it == '2') 2 else 0 }
         } else {
             picks13 + List(4) { listOf(0, 1, 2).random() }
         }
 
-        val picksJsArray = final17Picks.joinToString(prefix = "[", postfix = "]")
-        val currentAccountNum = currentIndex + 1
+        val jsArray = final17.joinToString(prefix = "[", postfix = "]")
+        val accNum = currentIndex + 1
 
         val betJs = """
             (function() {
-                const picks = $picksJsArray;
+                const picks = $jsArray;
+                let c = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').trim() === 'Clear');
+                if (c) c.click();
 
-                let clearBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').trim() === 'Clear');
-                if (clearBtn) clearBtn.click();
-
-                const allDrawButtons = Array.from(document.querySelectorAll('*')).filter(el => {
-                    let txt = (el.innerText || '').trim();
-                    let lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
-                    return lines.length === 2 && lines[0] === 'DRAW' && !isNaN(parseFloat(lines[1]));
+                const draws = Array.from(document.querySelectorAll('*')).filter(e => {
+                    let l = (e.innerText||'').trim().split('\n').map(s => s.trim()).filter(Boolean);
+                    return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1]));
                 });
 
-                if (allDrawButtons.length < 17) {
-                    return "WAIT_RETRY:" + allDrawButtons.length;
-                }
+                if (draws.length < 17) return "WAIT_RETRY:" + draws.length;
 
                 for (let i = 0; i < 17; i++) {
-                    let drawBtn = allDrawButtons[i];
-                    let chosen = picks[i];
-                    let target = null;
-
-                    if (chosen === 0) target = drawBtn.previousElementSibling;
-                    else if (chosen === 1) target = drawBtn;
-                    else if (chosen === 2) target = drawBtn.nextElementSibling;
-
+                    let d = draws[i], ch = picks[i], target = (ch === 0 ? d.previousElementSibling : (ch === 1 ? d : d.nextElementSibling));
                     if (target) target.click();
                 }
 
-                setTimeout(function() {
-                    let placeBetBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').includes('Place bet'));
-                    if (placeBetBtn) placeBetBtn.click();
-                }, 800);
+                // Automatic Watcher: Continuously taps Place Bet as soon as it opens
+                let pollAttempts = 0;
+                let placeTimer = setInterval(() => {
+                    pollAttempts++;
+                    let pb = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').includes('Place bet') && e.offsetWidth > 40);
+                    if (pb) {
+                        pb.click();
+                        if (pb.firstElementChild) pb.firstElementChild.click();
+                        clearInterval(placeTimer);
+                    } else if (pollAttempts > 15) {
+                        clearInterval(placeTimer);
+                    }
+                }, 250);
 
-                return "SUCCESS: Account #" + $currentAccountNum + " applied pattern: " + "$clean".substring(0, Math.min(13, "$clean".length));
+                return "SUCCESS: Acc #" + $accNum + " pattern applied";
             })();
         """.trimIndent()
 
-        // Auto-waits if page is still downloading data packets
         var retries = 0
         val execBet = object : Runnable {
             override fun run() {
-                webView.evaluateJavascript(betJs) { result ->
-                    if (result?.contains("WAIT_RETRY") == true && retries < 8) {
+                webView.evaluateJavascript(betJs) { res ->
+                    if (res?.contains("WAIT_RETRY") == true && retries < 10) {
                         retries++
-                        tvStatus.text = "Network: Loading matches ($retries/8)..."
-                        handler.postDelayed(this, 800)
+                        tvStatus.text = "Loading matches ($retries/10)..."
+                        handler.postDelayed(this, 700)
                     } else {
-                        tvStatus.text = "Step 3: $result"
+                        tvStatus.text = "Step 3: $res"
+                        // Trigger Step 4 automatically after bet placement
+                        if (isAutoRunning && res?.contains("SUCCESS") == true) {
+                            handler.postDelayed({ runStep4_LogoutAndNext() }, 2800)
+                        }
                     }
                 }
             }
@@ -527,20 +446,20 @@ class MainActivity : AppCompatActivity() {
     // 4. NEXT
     // ========================================================
     private fun runStep4_LogoutAndNext() {
-        tvStatus.text = "Step 4: Clearing session & loading next account..."
-
+        tvStatus.text = "Step 4: Clearing session & loading next..."
         WebStorage.getInstance().deleteAllData()
         webView.clearCache(true)
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.removeAllCookies {
             cookieManager.flush()
-            runOnUiThread {
+    runOnUiThread {
                 if (numbersList.isNotEmpty()) {
                     if (currentIndex < numbersList.size - 1) {
                         currentIndex++
                     } else {
                         tvStatus.text = "ALL ACCOUNTS COMPLETED! 🎉"
+                        if (isAutoRunning) toggleAutoRun()
                         updateUI()
                         return@runOnUiThread
                     }
@@ -548,7 +467,12 @@ class MainActivity : AppCompatActivity() {
                 saveData()
                 updateUI()
                 webView.loadUrl("https://winpesa.ng")
+
+                // Auto-Run loop: proceed to next account's login
+                if (isAutoRunning) {
+                    handler.postDelayed({ runStep1_Login() }, 2200)
+                }
             }
         }
     }
-}
+} 
