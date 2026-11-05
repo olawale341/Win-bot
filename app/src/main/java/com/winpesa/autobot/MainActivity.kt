@@ -2,6 +2,7 @@ package com.winpesa.autobot
 
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -12,20 +13,16 @@ import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-
-data class AccountItem(
-    val phone: String,
-    val pass: String,
-    val pattern: String
-)
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var tvStatus: TextView
     private lateinit var tvAccountInfo: TextView
-    private lateinit var btnLoadAccounts: Button
+    private lateinit var btnDataMenu: Button
 
     private lateinit var btnStep1: Button
     private lateinit var btnStep2: Button
@@ -35,12 +32,17 @@ class MainActivity : AppCompatActivity() {
     private val maharaUrl = "https://winpesa.ng/games/Mahara-Jackpot-9192"
     private val handler = Handler(Looper.getMainLooper())
 
-    // List of accounts loaded
-    private val accountList = mutableListOf<AccountItem>()
+    // Separate Stores for Numbers and Patterns
+    private val numbersList = mutableListOf<String>()
+    private val patternsList = mutableListOf<String>()
     private var currentIndex = 0
+    private var commonPassword = "YourDefaultPassword123" // Change anytime in DATA menu
 
-    // Common default password if a line doesn't specify one
-    private val defaultPassword = "YourDefaultPassword123"
+    // File picker state
+    private var filePickTarget: String = "NUMBERS" // "NUMBERS" or "PATTERNS"
+    private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri?.let { handleUploadedFile(it) }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,7 +51,7 @@ class MainActivity : AppCompatActivity() {
 
         tvStatus = findViewById(R.id.tvStatus)
         tvAccountInfo = findViewById(R.id.tvAccountInfo)
-        btnLoadAccounts = findViewById(R.id.btnLoadAccounts)
+        btnDataMenu = findViewById(R.id.btnDataMenu)
 
         btnStep1 = findViewById(R.id.btnStep1)
         btnStep2 = findViewById(R.id.btnStep2)
@@ -58,9 +60,9 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
 
         setupWebView()
-        loadSavedAccountsFromStorage()
+        loadPersistedData()
 
-        btnLoadAccounts.setOnClickListener { showPasteAccountsDialog() }
+        btnDataMenu.setOnClickListener { showDataManagementMenu() }
 
         btnStep1.setOnClickListener { runStep1_Login() }
         btnStep2.setOnClickListener { runStep2_OpenMahara() }
@@ -70,13 +72,13 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
-        val settings = webView.settings
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true
-        settings.databaseEnabled = true
-        settings.useWideViewPort = true
-        settings.loadWithOverviewMode = true
-        settings.userAgentString = settings.userAgentString.replace("; wv", "")
+        val s = webView.settings
+        s.javaScriptEnabled = true
+        s.domStorageEnabled = true
+        s.databaseEnabled = true
+        s.useWideViewPort = true
+        s.loadWithOverviewMode = true
+        s.userAgentString = s.userAgentString.replace("; wv", "")
 
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = object : WebViewClient() {
@@ -85,82 +87,158 @@ class MainActivity : AppCompatActivity() {
                 tvStatus.text = "Loaded: $url"
             }
         }
-
         webView.loadUrl("https://winpesa.ng")
     }
 
     // ========================================================
-    // DIALOG: PASTE ACCOUNTS & PATTERNS
+    // ⚙️ DATA MANAGEMENT MENU (Paste or Upload .txt)
     // ========================================================
-    private fun showPasteAccountsDialog() {
-        val input = EditText(this)
-        input.hint = "Paste lines:\n08011111111, pass, 1X2121X12X121\nor\n08011111111, 1X2121X12X121"
-        input.setLines(10)
-
-        // Preload existing text if available
-        val prefs = getSharedPreferences("winpesa_data", MODE_PRIVATE)
-        input.setText(prefs.getString("raw_accounts", ""))
+    private fun showDataManagementMenu() {
+        val options = arrayOf(
+            "📱 Numbers: Paste Text",
+            "📁 Numbers: Upload .txt File",
+            "🎯 Patterns: Paste Text (H-D-A)",
+            "📁 Patterns: Upload .txt File",
+            "🔑 Set Common Password",
+            "🔄 Reset Progress to Account #1"
+        )
 
         AlertDialog.Builder(this)
-            .setTitle("Load Accounts & Patterns")
-            .setMessage("Paste your phone numbers and patterns below (one per line):")
+            .setTitle("⚙️ Data Manager")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showPasteDialog("NUMBERS")
+                    1 -> { filePickTarget = "NUMBERS"; filePickerLauncher.launch("text/*") }
+                    2 -> showPasteDialog("PATTERNS")
+                    3 -> { filePickTarget = "PATTERNS"; filePickerLauncher.launch("text/*") }
+                    4 -> showPasswordDialog()
+                    5 -> {
+                        currentIndex = 0
+                        saveData()
+                        updateUI()
+                        Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun showPasteDialog(type: String) {
+        val input = EditText(this)
+        input.setLines(10)
+        input.hint = if (type == "NUMBERS") "Paste phone numbers (one per line)" else "Paste 13 patterns like HDAHHDAHDAHDA (one per line)"
+
+        AlertDialog.Builder(this)
+            .setTitle(if (type == "NUMBERS") "Paste Phone Numbers" else "Paste 13-Match Patterns")
             .setView(input)
-            .setPositiveButton("Save & Load") { _, _ ->
-                val text = input.text.toString().trim()
-                prefs.edit().putString("raw_accounts", text).apply()
-                parseAccounts(text)
+            .setPositiveButton("Save") { _, _ ->
+                val lines = input.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                if (type == "NUMBERS") {
+                    numbersList.clear()
+                    numbersList.addAll(lines)
+                } else {
+                    patternsList.clear()
+                    patternsList.addAll(lines)
+                }
+                saveData()
+                updateUI()
+                Toast.makeText(this, "Loaded ${lines.size} items!", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
-    private fun parseAccounts(raw: String) {
-        accountList.clear()
-        val lines = raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-
-        for (line in lines) {
-            val parts = line.split(",").map { it.trim() }
-            if (parts.size >= 3) {
-                // phone, password, pattern
-                accountList.add(AccountItem(parts[0], parts[1], parts[2]))
-            } else if (parts.size == 2) {
-                // phone, pattern (uses default password)
-                accountList.add(AccountItem(parts[0], defaultPassword, parts[1]))
+    private fun handleUploadedFile(uri: Uri) {
+        try {
+            contentResolver.openInputStream(uri)?.use { stream ->
+                val text = stream.bufferedReader().readText()
+                val lines = text.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                if (filePickTarget == "NUMBERS") {
+                    numbersList.clear()
+                    numbersList.addAll(lines)
+                } else {
+                    patternsList.clear()
+                    patternsList.addAll(lines)
+                }
+                saveData()
+                updateUI()
+                Toast.makeText(this, "File loaded: ${lines.size} lines!", Toast.LENGTH_SHORT).show()
             }
-        }
-
-        currentIndex = 0
-        updateAccountUI()
-    }
-
-    private fun loadSavedAccountsFromStorage() {
-        val prefs = getSharedPreferences("winpesa_data", MODE_PRIVATE)
-        val saved = prefs.getString("raw_accounts", "") ?: ""
-        if (saved.isNotEmpty()) {
-            parseAccounts(saved)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error reading file: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
-    private fun updateAccountUI() {
-        if (accountList.isEmpty()) {
-            tvAccountInfo.text = "Acc: #0/0 | Tap LOAD to paste"
+    private fun showPasswordDialog() {
+        val input = EditText(this)
+        input.setText(commonPassword)
+        AlertDialog.Builder(this)
+            .setTitle("🔑 Common Password")
+            .setMessage("Set the password used across all phone numbers:")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                commonPassword = input.text.toString().trim()
+                saveData()
+                Toast.makeText(this, "Password updated!", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun updateUI() {
+        val numCount = numbersList.size
+        val patCount = patternsList.size
+
+        if (numCount == 0) {
+            tvAccountInfo.text = "Acc: #0/0 | Tap ⚙️ DATA to load"
         } else {
-            val acc = accountList[currentIndex]
-            tvAccountInfo.text = "Acc: #${currentIndex + 1}/${accountList.size}: ${acc.phone}\nPattern: ${acc.pattern}"
+            val phone = numbersList.getOrElse(currentIndex) { "None" }
+            val pattern = if (patCount > 0) patternsList[currentIndex % patCount] else "None"
+            tvAccountInfo.text = "Acc #${currentIndex + 1}/$numCount: $phone\nPat: $pattern"
         }
+    }
+
+    private fun saveData() {
+        val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
+        prefs.edit()
+            .putString("numbers", numbersList.joinToString("\n"))
+            .putString("patterns", patternsList.joinToString("\n"))
+            .putString("password", commonPassword)
+            .putInt("index", currentIndex)
+            .apply()
+    }
+
+    private fun loadPersistedData() {
+        val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
+        commonPassword = prefs.getString("password", "YourDefaultPassword123") ?: "YourDefaultPassword123"
+        currentIndex = prefs.getInt("index", 0)
+
+        val nums = prefs.getString("numbers", "") ?: ""
+        if (nums.isNotEmpty()) {
+            numbersList.clear()
+            numbersList.addAll(nums.split("\n"))
+        }
+
+        val pats = prefs.getString("patterns", "") ?: ""
+        if (pats.isNotEmpty()) {
+            patternsList.clear()
+            patternsList.addAll(pats.split("\n"))
+        }
+        updateUI()
     }
 
     // ========================================================
-    // STEP 1: LOGIN WITH CURRENT ACCOUNT
+    // 1. LOGIN
     // ========================================================
     private fun runStep1_Login() {
-        if (accountList.isEmpty()) {
-            tvStatus.text = "Error: No accounts loaded! Tap LOAD first."
+        if (numbersList.isEmpty()) {
+            tvStatus.text = "Error: Load phone numbers first via ⚙️ DATA"
             return
         }
 
-        val current = accountList[currentIndex]
-        tvStatus.text = "Step 1: Logging in ${current.phone}..."
+        val phone = numbersList[currentIndex]
+        tvStatus.text = "Step 1: Logging in $phone..."
 
         val loginScript = """
             (function() {
@@ -185,8 +263,8 @@ class MainActivity : AppCompatActivity() {
                 let passInput = document.querySelector('input[placeholder*="Password"], input[type="password"]');
 
                 if (phoneInput && passInput) {
-                    setReactInput(phoneInput, '${current.phone}');
-                    setReactInput(passInput, '${current.pass}');
+                    setReactInput(phoneInput, '$phone');
+                    setReactInput(passInput, '$commonPassword');
 
                     setTimeout(function() {
                         let submitBtn = Array.from(document.querySelectorAll('button, div[role="button"]'))
@@ -211,13 +289,13 @@ class MainActivity : AppCompatActivity() {
             if (result?.contains("OPENED_MODAL") == true) {
                 handler.postDelayed({ runStep1_Login() }, 800)
             } else if (result?.contains("TYPED_AND_SUBMITTED") == true) {
-                tvStatus.text = "Step 1: Logged in ${current.phone}! Ready for Step 2."
+                tvStatus.text = "Step 1: Logged in $phone! Ready for Step 2."
             }
         }
     }
 
     // ========================================================
-    // STEP 2: OPEN MAHARA & JUMP INSIDE
+    // 2. MAHARA
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara Jackpot..."
@@ -255,24 +333,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // STEP 3: PICK CURRENT ACCOUNT'S 13 PATTERN + 4 RESERVES
+    // 3. BET (Parses H-D-A or 1-X-2 + 4 Auto-Reserves)
     // ========================================================
     private fun runStep3_PickAndBet() {
-        if (accountList.isEmpty()) return
+        if (patternsList.isEmpty()) {
+            tvStatus.text = "Error: Load 13 patterns first via ⚙️ DATA"
+            return
+        }
 
-        val current = accountList[currentIndex]
-        tvStatus.text = "Step 3: Selecting pattern for ${current.phone}..."
+        // Get pattern for this account (cycles if patterns < numbers)
+        val rawPattern = patternsList[currentIndex % patternsList.size]
+        tvStatus.text = "Step 3: Applying pattern ($rawPattern)..."
 
-        val clean13 = current.pattern.replace(",", "").trim()
+        // Clean out spaces/commas and convert H/D/A or 1/X/2 to indices [0, 1, 2]
+        val clean13 = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
         val picks13 = clean13.take(13).map { char ->
-            when (char.uppercaseChar()) {
-                '1', 'H' -> 0
-                'X', 'D' -> 1
-                '2', 'A' -> 2
+            when (char) {
+                'H', '1' -> 0
+                'D', 'X' -> 1
+                'A', '2' -> 2
                 else -> 0
             }
         }.toMutableList()
 
+        // 4 Auto-Reserves
         val autoReserves4 = List(4) { listOf(0, 1, 2).random() }
         val final17Picks = picks13 + autoReserves4
         val picksJsArray = final17Picks.joinToString(prefix = "[", postfix = "]")
@@ -308,7 +392,7 @@ class MainActivity : AppCompatActivity() {
                     if (placeBetBtn) placeBetBtn.click();
                 }, 800);
 
-                return "SUCCESS: Bet submitted for current account!";
+                return "SUCCESS: 17/17 Selected & Place Bet Clicked!";
             })();
         """.trimIndent()
 
@@ -318,29 +402,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // STEP 4: INSTANT LOGOUT & SHIFT TO NEXT ACCOUNT
+    // 4. NEXT (Instant Logout & Advance Index)
     // ========================================================
     private fun runStep4_LogoutAndNext() {
-        tvStatus.text = "Step 4: Clearing session & loading next account..."
+        tvStatus.text = "Step 4: Clearing session & loading next..."
 
-        // 1. Wipe all session cookies instantly
         val cookieManager = CookieManager.getInstance()
         cookieManager.removeAllCookies {
             cookieManager.flush()
             runOnUiThread {
-                // 2. Advance to next account index
-                if (accountList.isNotEmpty()) {
-                    if (currentIndex < accountList.size - 1) {
+                if (numbersList.isNotEmpty()) {
+                    if (currentIndex < numbersList.size - 1) {
                         currentIndex++
                     } else {
-                        tvStatus.text = "FINISHED ALL ACCOUNTS! 🎉"
-                        updateAccountUI()
+                        tvStatus.text = "FINISHED ALL NUMBERS! 🎉"
+                        updateUI()
                         return@runOnUiThread
                     }
                 }
-                updateAccountUI()
-
-                // 3. Reload WinPesa home fresh for next account
+                saveData()
+                updateUI()
                 webView.loadUrl("https://winpesa.ng")
             }
         }
