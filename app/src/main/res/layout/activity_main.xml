@@ -4,43 +4,37 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <!-- Top Account Tracker & Load Button -->
+    <!-- Top Account Bar & Menu Button -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#111111"
-        android:orientation="horizontal"
+        android:background="#151515"
         android:padding="8dp">
-
         <TextView
             android:id="@+id/tvAccountInfo"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Acc: #0/0 | Load accounts to start"
+            android:text="Acc: #0/0 | Tap DATA"
             android:textColor="#FFCC00"
-            android:textSize="13sp"
+            android:textSize="12sp"
             android:textStyle="bold" />
-
         <Button
-            android:id="@+id/btnLoadAccounts"
+            android:id="@+id/btnDataMenu"
             android:layout_width="wrap_content"
             android:layout_height="36dp"
-            android:backgroundTint="#444444"
-            android:paddingHorizontal="10dp"
-            android:text="📂 LOAD"
-            android:textColor="#FFFFFF"
+            android:text="⚙️ DATA"
             android:textSize="11sp" />
     </LinearLayout>
 
-    <!-- Real-time Status Bar -->
+    <!-- Status Bar -->
     <TextView
         android:id="@+id/tvStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#222222"
-        android:padding="8dp"
-        android:text="Status: Ready..."
+        android:background="#222"
+        android:padding="6dp"
+        android:text="Status: Ready"
         android:textColor="#00FF66"
         android:textSize="12sp" />
 
@@ -55,48 +49,35 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#000000"
-        android:orientation="horizontal"
-        android:weightSum="4">
-
+        android:weightSum="4"
+        android:background="#000">
         <Button
             android:id="@+id/btnStep1"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:backgroundTint="#007BFF"
-            android:text="1. LOGIN"
-            android:textColor="#FFFFFF"
-            android:textSize="11sp" />
-
+            android:text="1.LOGIN"
+            android:textSize="10sp" />
         <Button
             android:id="@+id/btnStep2"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:backgroundTint="#FF8800"
-            android:text="2. MAHARA"
-            android:textColor="#FFFFFF"
-            android:textSize="11sp" />
-
+            android:text="2.MAHARA"
+            android:textSize="10sp" />
         <Button
             android:id="@+id/btnStep3"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:backgroundTint="#00AA44"
-            android:text="3. BET"
-            android:textColor="#FFFFFF"
-            android:textSize="11sp" />
-
+            android:text="3.BET"
+            android:textSize="10sp" />
         <Button
             android:id="@+id/btnStep4"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:backgroundTint="#DC3545"
-            android:text="4. NEXT"
-            android:textColor="#FFFFFF"
-            android:textSize="11sp" />
+            android:text="4.NEXT"
+            android:textSize="10sp" />
     </LinearLayout>
 </LinearLayout>
