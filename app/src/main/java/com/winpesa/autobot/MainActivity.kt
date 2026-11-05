@@ -32,14 +32,12 @@ class MainActivity : AppCompatActivity() {
     private val maharaUrl = "https://winpesa.ng/games/Mahara-Jackpot-9192"
     private val handler = Handler(Looper.getMainLooper())
 
-    // Separate Stores for Numbers and Patterns
     private val numbersList = mutableListOf<String>()
     private val patternsList = mutableListOf<String>()
     private var currentIndex = 0
-    private var commonPassword = "YourDefaultPassword123" // Change anytime in DATA menu
+    private var commonPassword = "YourDefaultPassword123"
 
-    // File picker state
-    private var filePickTarget: String = "NUMBERS" // "NUMBERS" or "PATTERNS"
+    private var filePickTarget: String = "NUMBERS"
     private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let { handleUploadedFile(it) }
     }
@@ -63,7 +61,6 @@ class MainActivity : AppCompatActivity() {
         loadPersistedData()
 
         btnDataMenu.setOnClickListener { showDataManagementMenu() }
-
         btnStep1.setOnClickListener { runStep1_Login() }
         btnStep2.setOnClickListener { runStep2_OpenMahara() }
         btnStep3.setOnClickListener { runStep3_PickAndBet() }
@@ -90,9 +87,6 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://winpesa.ng")
     }
 
-    // ========================================================
-    // ⚙️ DATA MANAGEMENT MENU (Paste or Upload .txt)
-    // ========================================================
     private fun showDataManagementMenu() {
         val options = arrayOf(
             "📱 Numbers: Paste Text",
@@ -130,7 +124,7 @@ class MainActivity : AppCompatActivity() {
         input.hint = if (type == "NUMBERS") "Paste phone numbers (one per line)" else "Paste 13 patterns like HDAHHDAHDAHDA (one per line)"
 
         AlertDialog.Builder(this)
-            .setTitle(if (type == "NUMBERS") "Paste Phone Numbers" else "Paste 13-Match Patterns")
+            .setTitle(if (type == "NUMBERS") "Paste Phone Numbers" else "Paste Patterns")
             .setView(input)
             .setPositiveButton("Save") { _, _ ->
                 val lines = input.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
@@ -143,7 +137,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 saveData()
                 updateUI()
-                Toast.makeText(this, "Loaded ${lines.size} items!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Saved ${lines.size} items!", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -163,10 +157,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 saveData()
                 updateUI()
-                Toast.makeText(this, "File loaded: ${lines.size} lines!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Loaded ${lines.size} lines!", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
-            Toast.makeText(this, "Error reading file: ${e.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -180,7 +174,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Save") { _, _ ->
                 commonPassword = input.text.toString().trim()
                 saveData()
-                Toast.makeText(this, "Password updated!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Password saved!", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -298,7 +292,7 @@ class MainActivity : AppCompatActivity() {
     // 2. MAHARA
     // ========================================================
     private fun runStep2_OpenMahara() {
-        tvStatus.text = "Step 2: Loading Mahara Jackpot..."
+        tvStatus.text = "Step 2: Loading Mahara..."
         webView.loadUrl(maharaUrl)
 
         var attempts = 0
@@ -333,21 +327,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 3. BET (Parses H-D-A or 1-X-2 + 4 Auto-Reserves)
+    // 3. BET (Pinpoint Match-Row Selection using H-D-A)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
-            tvStatus.text = "Error: Load 13 patterns first via ⚙️ DATA"
+            tvStatus.text = "Error: Load patterns first via ⚙️ DATA"
             return
         }
 
-        // Get pattern for this account (cycles if patterns < numbers)
+        // Get this account's specific pattern
         val rawPattern = patternsList[currentIndex % patternsList.size]
-        tvStatus.text = "Step 3: Applying pattern ($rawPattern)..."
+        val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
 
-        // Clean out spaces/commas and convert H/D/A or 1/X/2 to indices [0, 1, 2]
-        val clean13 = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
-        val picks13 = clean13.take(13).map { char ->
+        // Map H/1 -> 0 (Home), D/X -> 1 (Draw), A/2 -> 2 (Away)
+        val picks13 = clean.take(13).map { char ->
             when (char) {
                 'H', '1' -> 0
                 'D', 'X' -> 1
@@ -356,43 +349,60 @@ class MainActivity : AppCompatActivity() {
             }
         }.toMutableList()
 
-        // 4 Auto-Reserves
-        val autoReserves4 = List(4) { listOf(0, 1, 2).random() }
-        val final17Picks = picks13 + autoReserves4
+        // If the pattern only has 13 picks, auto-generate 4 reserves.
+        // If the user provided all 17 picks, use their exact 4 reserves!
+        val final17Picks = if (clean.length >= 17) {
+            picks13 + clean.substring(13, 17).map { char ->
+                when (char) {
+                    'H', '1' -> 0
+                    'D', 'X' -> 1
+                    'A', '2' -> 2
+                    else -> 0
+                }
+            }
+        } else {
+            picks13 + List(4) { listOf(0, 1, 2).random() }
+        }
+
         val picksJsArray = final17Picks.joinToString(prefix = "[", postfix = "]")
 
         val betJs = """
             (function() {
-                const picks = $picksJsArray;
+                const picks = $picksJsArray; // Exactly 17 picks [0, 1, or 2]
 
-                const allOddsButtons = Array.from(document.querySelectorAll('*')).filter(el => {
-                    let txt = (el.innerText || '').trim();
-                    let lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
-                    if (lines.length === 2) {
-                        let hasLabel = (lines[0] === 'WIN' || lines[0] === 'DRAW' || lines[1] === 'WIN' || lines[1] === 'DRAW');
-                        let hasOdds = (!isNaN(parseFloat(lines[0])) || !isNaN(parseFloat(lines[1])));
-                        return hasLabel && hasOdds;
+                // Find all 17 match rows.
+                // Each match row is a 3-button container: [Home, Draw, Away]
+                const matchRows = Array.from(document.querySelectorAll('div')).filter(row => {
+                    if (row.children.length === 3) {
+                        let t0 = (row.children[0].innerText || '').trim();
+                        let t1 = (row.children[1].innerText || '').trim();
+                        let t2 = (row.children[2].innerText || '').trim();
+                        return (t0.includes('WIN') && t1.includes('DRAW') && t2.includes('WIN'));
                     }
                     return false;
                 });
 
-                if (allOddsButtons.length < 51) {
-                    return "WAIT: Found " + allOddsButtons.length + " buttons. Wait 2 seconds and tap 3. BET again!";
+                if (matchRows.length < 17) {
+                    return "WAIT: Found " + matchRows.length + " matches. Wait 2 seconds and tap 3. BET again!";
                 }
 
+                // Click the EXACT outcome (0=Home, 1=Draw, 2=Away) for every match 1 to 17
                 for (let i = 0; i < 17; i++) {
-                    let outcome = picks[i];
-                    let targetIndex = (i * 3) + outcome;
-                    let targetBtn = allOddsButtons[targetIndex];
-                    if (targetBtn) targetBtn.click();
+                    let chosenOutcome = picks[i];
+                    let btn = matchRows[i].children[chosenOutcome];
+                    if (btn) {
+                        btn.click();
+                        if (btn.firstElementChild) btn.firstElementChild.click();
+                    }
                 }
 
+                // Click Place Bet
                 setTimeout(function() {
                     let placeBetBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').includes('Place bet'));
                     if (placeBetBtn) placeBetBtn.click();
                 }, 800);
 
-                return "SUCCESS: 17/17 Selected & Place Bet Clicked!";
+                return "SUCCESS: Applied pattern: " + "$clean".substring(0, 13);
             })();
         """.trimIndent()
 
@@ -402,10 +412,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT (Instant Logout & Advance Index)
+    // 4. NEXT (Instant Logout & Shift to Next Account)
     // ========================================================
     private fun runStep4_LogoutAndNext() {
-        tvStatus.text = "Step 4: Clearing session & loading next..."
+        tvStatus.text = "Step 4: Clearing session & loading next account..."
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.removeAllCookies {
@@ -415,7 +425,7 @@ class MainActivity : AppCompatActivity() {
                     if (currentIndex < numbersList.size - 1) {
                         currentIndex++
                     } else {
-                        tvStatus.text = "FINISHED ALL NUMBERS! 🎉"
+                        tvStatus.text = "ALL ACCOUNTS COMPLETED! 🎉"
                         updateUI()
                         return@runOnUiThread
                     }
