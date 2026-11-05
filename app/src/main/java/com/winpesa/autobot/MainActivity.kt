@@ -327,7 +327,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 3. BET (Pinpoint Match-Row Selection using H-D-A)
+    // 3. BET (Real Touch Events with Sequential Stagger)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -335,11 +335,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Get this account's specific pattern
         val rawPattern = patternsList[currentIndex % patternsList.size]
         val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
 
-        // Map H/1 -> 0 (Home), D/X -> 1 (Draw), A/2 -> 2 (Away)
+        // Map H/1 -> 0, D/X -> 1, A/2 -> 2
         val picks13 = clean.take(13).map { char ->
             when (char) {
                 'H', '1' -> 0
@@ -349,8 +348,6 @@ class MainActivity : AppCompatActivity() {
             }
         }.toMutableList()
 
-        // If the pattern only has 13 picks, auto-generate 4 reserves.
-        // If the user provided all 17 picks, use their exact 4 reserves!
         val final17Picks = if (clean.length >= 17) {
             picks13 + clean.substring(13, 17).map { char ->
                 when (char) {
@@ -368,10 +365,22 @@ class MainActivity : AppCompatActivity() {
 
         val betJs = """
             (function() {
-                const picks = $picksJsArray; // Exactly 17 picks [0, 1, or 2]
+                const picks = $picksJsArray; // 17 picks
 
-                // Find all 17 match rows.
-                // Each match row is a 3-button container: [Home, Draw, Away]
+                // Dispatches real mobile touch events to any element
+                function forceTap(el) {
+                    if (!el) return;
+                    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(name => {
+                        try {
+                            el.dispatchEvent(new MouseEvent(name, { bubbles: true, cancelable: true, view: window }));
+                        } catch(e) {
+                            try { el.dispatchEvent(new Event(name, { bubbles: true })); } catch(e2) {}
+                        }
+                    });
+                    try { el.click(); } catch(e) {}
+                }
+
+                // Find all 17 match rows
                 const matchRows = Array.from(document.querySelectorAll('div')).filter(row => {
                     if (row.children.length === 3) {
                         let t0 = (row.children[0].innerText || '').trim();
@@ -383,26 +392,29 @@ class MainActivity : AppCompatActivity() {
                 });
 
                 if (matchRows.length < 17) {
-                    return "WAIT: Found " + matchRows.length + " matches. Wait 2 seconds and tap 3. BET again!";
+                    return "WAIT: Found only " + matchRows.length + " matches. Wait 2 seconds and tap 3. BET again!";
                 }
 
-                // Click the EXACT outcome (0=Home, 1=Draw, 2=Away) for every match 1 to 17
-                for (let i = 0; i < 17; i++) {
-                    let chosenOutcome = picks[i];
-                    let btn = matchRows[i].children[chosenOutcome];
-                    if (btn) {
-                        btn.click();
-                        if (btn.firstElementChild) btn.firstElementChild.click();
-                    }
-                }
+                // Sequentially tap all 17 matches with 35ms stagger
+                picks.forEach((chosenOutcome, i) => {
+                    setTimeout(() => {
+                        let row = matchRows[i];
+                        if (row && row.children[chosenOutcome]) {
+                            let target = row.children[chosenOutcome];
+                            forceTap(target);
+                            // Tap all child elements inside the box (labels & odds numbers)
+                            target.querySelectorAll('*').forEach(child => forceTap(child));
+                        }
+                    }, i * 35);
+                });
 
-                // Click Place Bet
-                setTimeout(function() {
+                // Place Bet after all 17 matches are tapped (17 * 35ms = ~600ms + buffer)
+                setTimeout(() => {
                     let placeBetBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').includes('Place bet'));
-                    if (placeBetBtn) placeBetBtn.click();
-                }, 800);
+                    if (placeBetBtn) forceTap(placeBetBtn);
+                }, 1100);
 
-                return "SUCCESS: Applied pattern: " + "$clean".substring(0, 13);
+                return "APPLIED: " + "$clean".substring(0, 13);
             })();
         """.trimIndent()
 
@@ -412,10 +424,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT (Instant Logout & Shift to Next Account)
+    // 4. NEXT
     // ========================================================
     private fun runStep4_LogoutAndNext() {
-        tvStatus.text = "Step 4: Clearing session & loading next account..."
+        tvStatus.text = "Step 4: Clearing session & loading next..."
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.removeAllCookies {
