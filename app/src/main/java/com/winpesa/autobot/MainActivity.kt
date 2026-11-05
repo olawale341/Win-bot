@@ -6,8 +6,10 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.View
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -30,7 +32,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnStep3: Button
     private lateinit var btnStep4: Button
 
-    // Fallback URL if dynamic link isn't found
     private var activeMaharaUrl = "https://winpesa.ng/games/Mahara-Jackpot-9192"
     private val handler = Handler(Looper.getMainLooper())
 
@@ -77,7 +78,12 @@ class MainActivity : AppCompatActivity() {
         s.databaseEnabled = true
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
+        s.cacheMode = WebSettings.LOAD_DEFAULT
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         s.userAgentString = s.userAgentString.replace("; wv", "")
+
+        // Hardware Acceleration for smooth page transitions
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = object : WebViewClient() {
@@ -85,7 +91,6 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 tvStatus.text = "Loaded: $url"
 
-                // Dynamically detect any updated weekly Mahara Jackpot link from homepage
                 if (url != null && url.contains("winpesa.ng")) {
                     detectDynamicMaharaLink()
                 }
@@ -94,7 +99,6 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://winpesa.ng")
     }
 
-    // Automatically finds the latest Mahara URL even if ID changes next week
     private fun detectDynamicMaharaLink() {
         val detectJs = """
             (function() {
@@ -118,7 +122,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Helper: Cleans up any phone format into exact 10 digits
     private fun sanitizePhone(phone: String): String {
         var p = phone.trim().replace(" ", "").replace("-", "")
         if (p.startsWith("+234")) p = p.substring(4)
@@ -127,6 +130,9 @@ class MainActivity : AppCompatActivity() {
         return p
     }
 
+    // ========================================================
+    // ⚙️ DATA MANAGEMENT MENU (With Wipe All Data Feature)
+    // ========================================================
     private fun showDataManagementMenu() {
         val options = arrayOf(
             "📱 Numbers: Paste Text",
@@ -135,7 +141,8 @@ class MainActivity : AppCompatActivity() {
             "📁 Patterns: Upload .txt File",
             "🔑 Set Common Password",
             "🔢 Jump to Specific Account #",
-            "🔄 Reset Progress to Account #1"
+            "🔄 Reset Progress to Account #1",
+            "🗑️ WIPE ALL (Clear Numbers, Patterns & Reset)"
         )
 
         AlertDialog.Builder(this)
@@ -154,9 +161,32 @@ class MainActivity : AppCompatActivity() {
                         updateUI()
                         Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show()
                     }
+                    7 -> confirmWipeAllData()
                 }
             }
             .setNegativeButton("Close", null)
+            .show()
+    }
+
+    // Completely wipes all data for a new batch
+    private fun confirmWipeAllData() {
+        AlertDialog.Builder(this)
+            .setTitle("🗑️ Wipe All Data?")
+            .setMessage("This will delete all saved phone numbers, patterns, and reset progress to #0 so you can start a fresh batch. Continue?")
+            .setPositiveButton("Yes, Wipe All") { _, _ ->
+                numbersList.clear()
+                patternsList.clear()
+                currentIndex = 0
+
+                val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
+                prefs.edit().clear().apply()
+
+                saveData()
+                updateUI()
+                tvStatus.text = "All data cleared! Ready for new batch."
+                Toast.makeText(this, "Cleaned up completely!", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 
@@ -291,7 +321,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN (With Sanitized Phone and Auto-Popups Killer)
+    // 1. LOGIN
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -357,7 +387,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA (With Dynamic Link & Continuous Iframe Escaper)
+    // 2. MAHARA (With High Latency Auto-Retry)
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara..."
@@ -386,8 +416,9 @@ class MainActivity : AppCompatActivity() {
                 webView.evaluateJavascript(watcherJs) { result ->
                     if (result?.contains("JUMPING_IFRAME") == true) {
                         tvStatus.text = "Step 2: Inside match screen! Ready for Step 3."
-                    } else if (attempts < 15) {
-                        handler.postDelayed(this, 700)
+                    } else if (attempts < 20) {
+                        // Checks up to 20 times (giving it plenty of time on slow mobile networks)
+                        handler.postDelayed(this, 750)
                     }
                 }
             }
@@ -395,7 +426,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 3. BET (Draw Anchor + Auto-Padding Protection)
+    // 3. BET (With Network Auto-Wait until 17 Matches Arrive)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -406,7 +437,6 @@ class MainActivity : AppCompatActivity() {
         val rawPattern = patternsList[currentIndex % patternsList.size]
         val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
 
-        // Auto-pads if pattern has fewer than 13 characters
         val safe13 = clean.take(13).toMutableList()
         while (safe13.size < 13) {
             safe13.add(listOf('H', 'D', 'A').random())
@@ -421,7 +451,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 4 Auto-Reserves
         val final17Picks = if (clean.length >= 17) {
             picks13 + clean.substring(13, 17).map { char ->
                 when (char) {
@@ -442,11 +471,9 @@ class MainActivity : AppCompatActivity() {
             (function() {
                 const picks = $picksJsArray;
 
-                // Clear previous selections first
                 let clearBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').trim() === 'Clear');
                 if (clearBtn) clearBtn.click();
 
-                // Find all 17 Draw buttons across the page
                 const allDrawButtons = Array.from(document.querySelectorAll('*')).filter(el => {
                     let txt = (el.innerText || '').trim();
                     let lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
@@ -454,10 +481,9 @@ class MainActivity : AppCompatActivity() {
                 });
 
                 if (allDrawButtons.length < 17) {
-                    return "WAIT: Found " + allDrawButtons.length + "/17 matches. Wait 2 seconds and tap 3. BET again!";
+                    return "WAIT_RETRY:" + allDrawButtons.length;
                 }
 
-                // Click exact outcomes
                 for (let i = 0; i < 17; i++) {
                     let drawBtn = allDrawButtons[i];
                     let chosen = picks[i];
@@ -479,13 +505,26 @@ class MainActivity : AppCompatActivity() {
             })();
         """.trimIndent()
 
-        webView.evaluateJavascript(betJs) { result ->
-            tvStatus.text = "Step 3: $result"
+        // Auto-waits if page is still downloading data packets
+        var retries = 0
+        val execBet = object : Runnable {
+            override fun run() {
+                webView.evaluateJavascript(betJs) { result ->
+                    if (result?.contains("WAIT_RETRY") == true && retries < 8) {
+                        retries++
+                        tvStatus.text = "Network: Loading matches ($retries/8)..."
+                        handler.postDelayed(this, 800)
+                    } else {
+                        tvStatus.text = "Step 3: $result"
+                    }
+                }
+            }
         }
+        execBet.run()
     }
 
     // ========================================================
-    // 4. NEXT (Deep Storage Wipe & Memory Optimization)
+    // 4. NEXT
     // ========================================================
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session & loading next account..."
