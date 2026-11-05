@@ -30,7 +30,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnStep3: Button
     private lateinit var btnStep4: Button
 
-    private val maharaUrl = "https://winpesa.ng/games/Mahara-Jackpot-9192"
+    // Fallback URL if dynamic link isn't found
+    private var activeMaharaUrl = "https://winpesa.ng/games/Mahara-Jackpot-9192"
     private val handler = Handler(Looper.getMainLooper())
 
     private val numbersList = mutableListOf<String>()
@@ -83,9 +84,47 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 tvStatus.text = "Loaded: $url"
+
+                // Dynamically detect any updated weekly Mahara Jackpot link from homepage
+                if (url != null && url.contains("winpesa.ng")) {
+                    detectDynamicMaharaLink()
+                }
             }
         }
         webView.loadUrl("https://winpesa.ng")
+    }
+
+    // Automatically finds the latest Mahara URL even if ID changes next week
+    private fun detectDynamicMaharaLink() {
+        val detectJs = """
+            (function() {
+                let link = Array.from(document.querySelectorAll('a, div')).find(el => {
+                    let href = el.getAttribute('href') || '';
+                    return href.includes('Mahara-Jackpot');
+                });
+                if (link) {
+                    let href = link.getAttribute('href');
+                    return href.startsWith('http') ? href : ('https://winpesa.ng' + href);
+                }
+                return null;
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(detectJs) { result ->
+            val clean = result?.replace("\"", "")?.trim()
+            if (!clean.isNullOrEmpty() && clean != "null" && clean.contains("Mahara-Jackpot")) {
+                activeMaharaUrl = clean
+            }
+        }
+    }
+
+    // Helper: Cleans up any phone format into exact 10 digits
+    private fun sanitizePhone(phone: String): String {
+        var p = phone.trim().replace(" ", "").replace("-", "")
+        if (p.startsWith("+234")) p = p.substring(4)
+        else if (p.startsWith("234") && p.length > 10) p = p.substring(3)
+        else if (p.startsWith("0") && p.length == 11) p = p.substring(1)
+        return p
     }
 
     private fun showDataManagementMenu() {
@@ -95,6 +134,7 @@ class MainActivity : AppCompatActivity() {
             "🎯 Patterns: Paste Text (H-D-A)",
             "📁 Patterns: Upload .txt File",
             "🔑 Set Common Password",
+            "🔢 Jump to Specific Account #",
             "🔄 Reset Progress to Account #1"
         )
 
@@ -107,7 +147,8 @@ class MainActivity : AppCompatActivity() {
                     2 -> showPasteDialog("PATTERNS")
                     3 -> { filePickTarget = "PATTERNS"; filePickerLauncher.launch("text/*") }
                     4 -> showPasswordDialog()
-                    5 -> {
+                    5 -> showJumpToAccountDialog()
+                    6 -> {
                         currentIndex = 0
                         saveData()
                         updateUI()
@@ -119,9 +160,30 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun showJumpToAccountDialog() {
+        val input = EditText(this)
+        input.hint = "Enter number e.g. 50"
+        AlertDialog.Builder(this)
+            .setTitle("Jump to Account #")
+            .setView(input)
+            .setPositiveButton("Go") { _, _ ->
+                val num = input.text.toString().trim().toIntOrNull()
+                if (num != null && num in 1..numbersList.size) {
+                    currentIndex = num - 1
+                    saveData()
+                    updateUI()
+                    Toast.makeText(this, "Jumped to #$num", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "Invalid account number", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun showPasteDialog(type: String) {
         val input = EditText(this)
-        input.setLines(10)
+        input.setLines(8)
         input.hint = if (type == "NUMBERS") "Paste phone numbers (one per line)" else "Paste patterns (one per line, e.g. HDAHHDAHDAHDA)"
 
         AlertDialog.Builder(this)
@@ -131,7 +193,7 @@ class MainActivity : AppCompatActivity() {
                 val lines = input.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
                 if (type == "NUMBERS") {
                     numbersList.clear()
-                    numbersList.addAll(lines)
+                    numbersList.addAll(lines.map { sanitizePhone(it) })
                 } else {
                     patternsList.clear()
                     patternsList.addAll(lines)
@@ -145,24 +207,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleUploadedFile(uri: Uri) {
-        try {
-            contentResolver.openInputStream(uri)?.use { stream ->
-                val text = stream.bufferedReader().readText()
-                val lines = text.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-                if (filePickTarget == "NUMBERS") {
-                    numbersList.clear()
-                    numbersList.addAll(lines)
-                } else {
-                    patternsList.clear()
-                    patternsList.addAll(lines)
+        Thread {
+            try {
+                contentResolver.openInputStream(uri)?.use { stream ->
+                    val lines = stream.bufferedReader().readLines().map { it.trim() }.filter { it.isNotEmpty() }
+                    runOnUiThread {
+                        if (filePickTarget == "NUMBERS") {
+                            numbersList.clear()
+                            numbersList.addAll(lines.map { sanitizePhone(it) })
+                        } else {
+                            patternsList.clear()
+                            patternsList.addAll(lines)
+                        }
+                        saveData()
+                        updateUI()
+                        Toast.makeText(this, "Loaded ${lines.size} items safely!", Toast.LENGTH_SHORT).show()
+                    }
                 }
-                saveData()
-                updateUI()
-                Toast.makeText(this, "Loaded ${lines.size} lines!", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Error reading file: ${e.message}", Toast.LENGTH_LONG).show()
+                }
             }
-        } catch (e: Exception) {
-            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-        }
+        }.start()
     }
 
     private fun showPasswordDialog() {
@@ -212,7 +279,7 @@ class MainActivity : AppCompatActivity() {
         val nums = prefs.getString("numbers", "") ?: ""
         if (nums.isNotEmpty()) {
             numbersList.clear()
-            numbersList.addAll(nums.split("\n"))
+            numbersList.addAll(nums.split("\n").map { sanitizePhone(it) })
         }
 
         val pats = prefs.getString("patterns", "") ?: ""
@@ -224,7 +291,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN
+    // 1. LOGIN (With Sanitized Phone and Auto-Popups Killer)
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -290,11 +357,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA
+    // 2. MAHARA (With Dynamic Link & Continuous Iframe Escaper)
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara..."
-        webView.loadUrl(maharaUrl)
+        webView.loadUrl(activeMaharaUrl)
 
         var attempts = 0
         handler.postDelayed(object : Runnable {
@@ -319,16 +386,16 @@ class MainActivity : AppCompatActivity() {
                 webView.evaluateJavascript(watcherJs) { result ->
                     if (result?.contains("JUMPING_IFRAME") == true) {
                         tvStatus.text = "Step 2: Inside match screen! Ready for Step 3."
-                    } else if (attempts < 12) {
-                        handler.postDelayed(this, 800)
+                    } else if (attempts < 15) {
+                        handler.postDelayed(this, 700)
                     }
                 }
             }
-        }, 1500)
+        }, 1200)
     }
 
     // ========================================================
-    // 3. BET (Clears previous ticket first -> Applies exact pattern)
+    // 3. BET (Draw Anchor + Auto-Padding Protection)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -336,20 +403,25 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Get this exact account's pattern
         val rawPattern = patternsList[currentIndex % patternsList.size]
         val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
 
-        // 13 picks: H/1 -> 0, D/X -> 1, A/2 -> 2
-        val picks13 = clean.take(13).map { char ->
+        // Auto-pads if pattern has fewer than 13 characters
+        val safe13 = clean.take(13).toMutableList()
+        while (safe13.size < 13) {
+            safe13.add(listOf('H', 'D', 'A').random())
+        }
+
+        val picks13 = safe13.map { char ->
             when (char) {
                 'H', '1' -> 0
                 'D', 'X' -> 1
                 'A', '2' -> 2
                 else -> 0
             }
-        }.toMutableList()
+        }
 
+        // 4 Auto-Reserves
         val final17Picks = if (clean.length >= 17) {
             picks13 + clean.substring(13, 17).map { char ->
                 when (char) {
@@ -368,15 +440,13 @@ class MainActivity : AppCompatActivity() {
 
         val betJs = """
             (function() {
-                const picks = $picksJsArray; // 17 picks for Account #$currentAccountNum
+                const picks = $picksJsArray;
 
-                // Step A: CLEAR ANY PREVIOUS PICKS FROM SCREEN FIRST!
+                // Clear previous selections first
                 let clearBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').trim() === 'Clear');
-                if (clearBtn) {
-                    clearBtn.click();
-                }
+                if (clearBtn) clearBtn.click();
 
-                // Step B: Locate all 17 DRAW buttons
+                // Find all 17 Draw buttons across the page
                 const allDrawButtons = Array.from(document.querySelectorAll('*')).filter(el => {
                     let txt = (el.innerText || '').trim();
                     let lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
@@ -387,32 +457,25 @@ class MainActivity : AppCompatActivity() {
                     return "WAIT: Found " + allDrawButtons.length + "/17 matches. Wait 2 seconds and tap 3. BET again!";
                 }
 
-                // Step C: Apply the EXACT pattern for Account #$currentAccountNum
+                // Click exact outcomes
                 for (let i = 0; i < 17; i++) {
                     let drawBtn = allDrawButtons[i];
-                    let chosen = picks[i]; // 0=Home, 1=Draw, 2=Away
+                    let chosen = picks[i];
                     let target = null;
 
-                    if (chosen === 0) {
-                        target = drawBtn.previousElementSibling; // Home
-                    } else if (chosen === 1) {
-                        target = drawBtn; // Draw
-                    } else if (chosen === 2) {
-                        target = drawBtn.nextElementSibling; // Away
-                    }
+                    if (chosen === 0) target = drawBtn.previousElementSibling;
+                    else if (chosen === 1) target = drawBtn;
+                    else if (chosen === 2) target = drawBtn.nextElementSibling;
 
-                    if (target) {
-                        target.click();
-                    }
+                    if (target) target.click();
                 }
 
-                // Step D: Click Place Bet
                 setTimeout(function() {
                     let placeBetBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').includes('Place bet'));
                     if (placeBetBtn) placeBetBtn.click();
                 }, 800);
 
-                return "SUCCESS: Account #" + $currentAccountNum + " applied pattern: " + "$clean".substring(0, 13);
+                return "SUCCESS: Account #" + $currentAccountNum + " applied pattern: " + "$clean".substring(0, Math.min(13, "$clean".length));
             })();
         """.trimIndent()
 
@@ -422,12 +485,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT (Deep Storage Wipe + Shift to Next Account)
+    // 4. NEXT (Deep Storage Wipe & Memory Optimization)
     // ========================================================
     private fun runStep4_LogoutAndNext() {
-        tvStatus.text = "Step 4: Clearing session & storage..."
+        tvStatus.text = "Step 4: Clearing session & loading next account..."
 
-        // Wipe cookies, local storage, and cache
         WebStorage.getInstance().deleteAllData()
         webView.clearCache(true)
 
