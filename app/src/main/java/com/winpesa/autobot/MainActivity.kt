@@ -2,7 +2,8 @@ package com.winpesa.autobot
 
 import android.annotation.SuppressLint
 import android.os.Bundle
-import android.webkit.CookieManager
+import android.os.Handler
+import android.os.Looper
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -27,16 +28,15 @@ class MainActivity : AppCompatActivity() {
 
     private val maharaUrl = "https://winpesa.ng/games/Mahara-Jackpot-9192"
 
-    // Your 13 predictions
+    // Your 13 predictions (1 = Home, X = Draw, 2 = Away)
     private val my13Pattern = "1X2121X12X121"
+
+    private val handler = Handler(Looper.getMainLooper())
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
-        // Enable Chrome remote inspection
-        WebView.setWebContentsDebuggingEnabled(true)
 
         tvStatus = findViewById(R.id.tvStatus)
         btnStep1 = findViewById(R.id.btnStep1)
@@ -46,20 +46,9 @@ class MainActivity : AppCompatActivity() {
 
         setupWebView()
 
-        // Step 1: Login
-        btnStep1.setOnClickListener {
-            runStep1_Login()
-        }
-
-        // Step 2: Navigate to Mahara & Click PLAY
-        btnStep2.setOnClickListener {
-            runStep2_OpenMahara()
-        }
-
-        // Step 3: Make all 17 picks & Place Bet
-        btnStep3.setOnClickListener {
-            runStep3_PickAndBet()
-        }
+        btnStep1.setOnClickListener { runStep1_Login() }
+        btnStep2.setOnClickListener { runStep2_OpenMahara() }
+        btnStep3.setOnClickListener { runStep3_PickAndBet() }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -78,39 +67,44 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 tvStatus.text = "Loaded: $url"
 
-                // Inject Eruda Inspector on every page load
-                injectErudaInspector()
+                // If loaded on Winpesa Mahara, automatically jump inside the iframe!
+                if (url != null && url.contains("winpesa.ng/games/Mahara-Jackpot")) {
+                    handler.postDelayed({
+                        jumpDirectlyIntoIframeGame()
+                    }, 1500)
+                }
             }
         }
 
         webView.loadUrl("https://winpesa.ng")
     }
 
-    // Injects floating developer inspector icon
-    private fun injectErudaInspector() {
-        val erudaJs = """
-            (function () {
-                if (window.eruda) return;
-                var script = document.createElement('script');
-                script.src = "//cdn.jsdelivr.net/npm/eruda";
-                document.body.appendChild(script);
-                script.onload = function () {
-                    if (window.eruda) eruda.init();
-                };
+    // Automatically jumps out of the WinPesa cage into the game URL directly
+    private fun jumpDirectlyIntoIframeGame() {
+        val escapeJs = """
+            (function() {
+                let iframe = document.querySelector('iframe');
+                if (iframe && iframe.src && iframe.src.includes('aggrhub.com')) {
+                    window.location.href = iframe.src;
+                    return "JUMPING_INTO_GAME";
+                }
+                return "SEARCHING_IFRAME";
             })();
         """.trimIndent()
-        webView.evaluateJavascript(erudaJs, null)
+
+        webView.evaluateJavascript(escapeJs) { result ->
+            if (result?.contains("JUMPING_INTO_GAME") == true) {
+                tvStatus.text = "Step 2: Loaded game directly! Ready for Step 3."
+            }
+        }
     }
 
-    // ========================================================
-    // STEP 1: LOGIN
-    // ========================================================
+    // STEP 1: Login
     private fun runStep1_Login() {
         tvStatus.text = "Step 1: Logging in..."
 
         val script = """
             (function() {
-                // Close any promo popups first
                 let closeBtns = Array.from(document.querySelectorAll('button, div, span, svg, i')).filter(el => {
                     let txt = (el.innerText || '').trim();
                     let cls = (el.className || '').toString().toLowerCase();
@@ -136,7 +130,7 @@ class MainActivity : AppCompatActivity() {
                         if (submitBtn) submitBtn.click();
                     }, 400);
 
-                    return "Credentials typed & Login clicked!";
+                    return "Logged in successfully!";
                 } else {
                     let headerLoginBtn = Array.from(document.querySelectorAll('button, a, div'))
                         .find(el => el.innerText && el.innerText.trim() === 'LOGIN');
@@ -154,44 +148,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ========================================================
-    // STEP 2: OPEN MAHARA & TAP PLAY
-    // ========================================================
+    // STEP 2: Open Mahara
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara page..."
         webView.loadUrl(maharaUrl)
 
-        // Give it 3 seconds to load, then click PLAY
-        webView.postDelayed({
-            val clickPlayJs = """
-                (function() {
-                    // Close any daily promo modal
-                    let closeX = Array.from(document.querySelectorAll('button, div, span')).find(el => el.innerText && el.innerText.trim() === '×');
-                    if (closeX) closeX.click();
-
-                    // Find and click the yellow PLAY button
-                    let playBtn = Array.from(document.querySelectorAll('button, div')).find(el => {
-                        let txt = (el.innerText || '').trim();
-                        return txt === 'PLAY';
-                    });
-
-                    if (playBtn) {
-                        playBtn.click();
-                        return "SUCCESS: Clicked PLAY button!";
-                    }
-                    return "PLAY button not found yet (tap Step 2 again if still loading)";
-                })();
-            """.trimIndent()
-
-            webView.evaluateJavascript(clickPlayJs) { result ->
-                tvStatus.text = "Step 2: $result"
-            }
-        }, 3000)
+        // Give it 2.5 seconds, then check and jump
+        handler.postDelayed({
+            jumpDirectlyIntoIframeGame()
+        }, 2500)
     }
 
-    // ========================================================
-    // STEP 3: PICK MATCHES & PLACE BET
-    // ========================================================
+    // STEP 3: Pick Matches 1 to 17 & Bet
     private fun runStep3_PickAndBet() {
         tvStatus.text = "Step 3: Selecting predictions..."
 
@@ -205,35 +173,42 @@ class MainActivity : AppCompatActivity() {
             }
         }.toMutableList()
 
-        // 4 random reserve picks
         val autoReserves4 = List(4) { listOf(0, 1, 2).random() }
         val final17Picks = picks13 + autoReserves4
         val picksJsArray = final17Picks.joinToString(prefix = "[", postfix = "]")
 
         val betJs = """
             (function() {
-                const picks = $picksJsArray;
-                
-                // Find all match buttons containing WIN or DRAW
-                const allOddsButtons = Array.from(document.querySelectorAll('button, div')).filter(el => {
-                    const txt = (el.innerText || '').trim();
-                    return (txt.startsWith('WIN') || txt.startsWith('DRAW')) && el.children.length > 0;
+                const picks = $picksJsArray; // 17 picks
+
+                // THE EXACT 51 BUTTON RULE:
+                // Find all elements whose text is strictly 2 lines: ["WIN", "2.35"] or ["DRAW", "3.45"]
+                const allOddsButtons = Array.from(document.querySelectorAll('*')).filter(el => {
+                    let txt = (el.innerText || '').trim();
+                    let lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
+                    if (lines.length === 2) {
+                        let hasLabel = (lines[0] === 'WIN' || lines[0] === 'DRAW' || lines[1] === 'WIN' || lines[1] === 'DRAW');
+                        let hasOdds = (!isNaN(parseFloat(lines[0])) || !isNaN(parseFloat(lines[1])));
+                        return hasLabel && hasOdds;
+                    }
+                    return false;
                 });
 
                 if (allOddsButtons.length < 51) {
-                    return "ERROR: Found only " + allOddsButtons.length + " odds buttons. Need 51.";
+                    return "ERROR: Found " + allOddsButtons.length + " buttons (must be on aggrhub screen).";
                 }
 
-                // Click all 17 predictions
+                // Click all 17 matches in order (0 to 16)
                 for (let i = 0; i < 17; i++) {
-                    let outcome = picks[i];
+                    let outcome = picks[i]; // 0, 1, or 2
                     let targetIndex = (i * 3) + outcome;
-                    if (targetIndex < allOddsButtons.length) {
-                        allOddsButtons[targetIndex].click();
+                    let targetBtn = allOddsButtons[targetIndex];
+                    if (targetBtn) {
+                        targetBtn.click();
                     }
                 }
 
-                // Click "Place bet"
+                // Tap Place Bet after 1 second
                 setTimeout(function() {
                     let placeBetBtn = Array.from(document.querySelectorAll('button, div')).find(el => {
                         let txt = (el.innerText || '').trim();
@@ -242,9 +217,9 @@ class MainActivity : AppCompatActivity() {
                     if (placeBetBtn) {
                         placeBetBtn.click();
                     }
-                }, 1200);
+                }, 1000);
 
-                return "SUCCESS: 17 picks selected and Place Bet clicked!";
+                return "SUCCESS: Selected 17 of 17 matches and clicked Place Bet!";
             })();
         """.trimIndent()
 
