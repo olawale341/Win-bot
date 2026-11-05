@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <!-- Live Status Bar -->
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#1E1E1E"
+        android:padding="12dp"
+        android:text="Status: Ready to test..."
+        android:textColor="#00FF66"
+        android:textSize="14sp" />
+
+    <!-- WinPesa Internal Web View -->
+    <WebView
+        android:id="@+id/webView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <!-- Trigger Button -->
+    <Button
+        android:id="@+id/btnRunSingleTest"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Run Single Test (1 Account)"
+        android:backgroundTint="#007BFF"
+        android:textColor="#FFFFFF" />
+</LinearLayout>
