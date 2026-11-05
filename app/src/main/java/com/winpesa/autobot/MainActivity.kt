@@ -327,7 +327,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 3. BET (The 51 Individual Odds Buttons Formula)
+    // 3. BET (Card-by-Card Match Selection - Clicks Once)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -338,7 +338,7 @@ class MainActivity : AppCompatActivity() {
         val rawPattern = patternsList[currentIndex % patternsList.size]
         val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
 
-        // 13 picks: H/1 -> 0, D/X -> 1, A/2 -> 2
+        // 13 picks from pattern: H/1 -> 0, D/X -> 1, A/2 -> 2
         val picks13 = clean.take(13).map { char ->
             when (char) {
                 'H', '1' -> 0
@@ -365,42 +365,51 @@ class MainActivity : AppCompatActivity() {
 
         val betJs = """
             (function() {
-                const picks = $picksJsArray; // 17 picks (0, 1, or 2)
+                const picks = $picksJsArray; // 17 picks: 0=Home, 1=Draw, 2=Away
 
-                // Find only the individual odds boxes (contain WIN or DRAW, but NEVER both!)
-                const oddsBoxes = Array.from(document.querySelectorAll('button, div')).filter(el => {
-                    let txt = (el.innerText || '').trim();
-                    let hasWin = txt.includes('WIN');
-                    let hasDraw = txt.includes('DRAW');
-                    let isSingleOdd = (hasWin && !hasDraw) || (hasDraw && !hasWin);
-                    let hasOddsNumber = /\d+\.\d+/.test(txt);
-                    // Match the inner clickable button box
-                    return isSingleOdd && hasOddsNumber && el.children.length > 0 && el.children.length <= 3;
+                // 1. Locate all match cards
+                let cards = Array.from(document.querySelectorAll('div')).filter(el => {
+                    let cls = (el.className || '').toString();
+                    return cls.includes('bg-game-container') || (el.innerText && el.innerText.includes('DRAW') && el.innerText.includes('WIN') && el.children.length >= 3);
                 });
 
-                if (oddsBoxes.length < 51) {
-                    return "WAIT: Found " + oddsBoxes.length + " buttons (Need 51). Wait 2s and tap 3. BET again!";
+                // Remove wrapper parents
+                cards = cards.filter(c => !cards.some(other => other !== c && other.contains(c)));
+
+                if (cards.length < 17) {
+                    return "WAIT: Found " + cards.length + "/17 match cards. Make sure page is loaded!";
                 }
 
-                // Click each of the 17 matches
+                // 2. Click each match once to highlight in yellow
+                let successCount = 0;
                 for (let i = 0; i < 17; i++) {
-                    let chosen = picks[i];
-                    let targetIndex = (i * 3) + chosen;
-                    let box = oddsBoxes[targetIndex];
-                    if (box) {
-                        box.click();
-                        // Also trigger any inner element
-                        if (box.firstElementChild) box.firstElementChild.click();
+                    let card = cards[i];
+                    let chosen = picks[i]; // 0=Home, 1=Draw, 2=Away
+
+                    // Find the 3 clickable boxes in this match
+                    let buttons = Array.from(card.querySelectorAll('button, div')).filter(b => {
+                        let txt = (b.innerText || '').trim();
+                        let hasWin = txt.startsWith('WIN');
+                        let hasDraw = txt.startsWith('DRAW');
+                        return (hasWin || hasDraw) && b.children.length <= 2;
+                    });
+
+                    // Keep only lowest-level clickable elements
+                    buttons = buttons.filter(b => !buttons.some(inner => inner !== b && b.contains(inner)));
+
+                    if (buttons.length >= 3 && buttons[chosen]) {
+                        buttons[chosen].click();
+                        successCount++;
                     }
                 }
 
-                // Click Place Bet after 800ms
+                // 3. Click Place Bet
                 setTimeout(function() {
                     let placeBetBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').includes('Place bet'));
                     if (placeBetBtn) placeBetBtn.click();
                 }, 800);
 
-                return "SUCCESS: Selected all 17 (" + "$clean".substring(0, 13) + ")";
+                return "SUCCESS: Selected " + successCount + "/17 matches (" + "$clean".substring(0, 13) + ")";
             })();
         """.trimIndent()
 
@@ -413,7 +422,7 @@ class MainActivity : AppCompatActivity() {
     // 4. NEXT
     // ========================================================
     private fun runStep4_LogoutAndNext() {
-        tvStatus.text = "Step 4: Clearing session & loading next..."
+        tvStatus.text = "Step 4: Clearing session & loading next account..."
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.removeAllCookies {
