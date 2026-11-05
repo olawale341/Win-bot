@@ -4,32 +4,41 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <!-- Top Account Bar & Menu Button -->
+    <!-- Top Account Bar & Auto / Data Buttons -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="#151515"
-        android:padding="8dp">
+        android:padding="6dp"
+        android:gravity="center_vertical">
         <TextView
             android:id="@+id/tvAccountInfo"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Acc: #0/0 | Tap ⚙️ DATA"
+            android:text="Acc: #0/0 | Tap DATA"
             android:textColor="#FFCC00"
             android:textSize="12sp"
             android:textStyle="bold" />
         <Button
+            android:id="@+id/btnAutoRun"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:backgroundTint="#00AA44"
+            android:text="▶️ AUTO"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
+            android:layout_marginEnd="4dp" />
+        <Button
             android:id="@+id/btnDataMenu"
             android:layout_width="wrap_content"
-            android:layout_height="38dp"
+            android:layout_height="36dp"
             android:backgroundTint="#6F42C1"
             android:text="⚙️ DATA"
             android:textColor="#FFFFFF"
             android:textSize="11sp" />
     </LinearLayout>
 
-    <!-- Real-time Status Bar -->
     <TextView
         android:id="@+id/tvStatus"
         android:layout_width="match_parent"
@@ -40,14 +49,12 @@
         android:textColor="#00FF66"
         android:textSize="12sp" />
 
-    <!-- Web View Frame -->
     <WebView
         android:id="@+id/webView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1" />
 
-    <!-- Colored Action Buttons -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
