@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -121,7 +122,7 @@ class MainActivity : AppCompatActivity() {
     private fun showPasteDialog(type: String) {
         val input = EditText(this)
         input.setLines(10)
-        input.hint = if (type == "NUMBERS") "Paste phone numbers (one per line)" else "Paste 13 patterns like HDAHHDAHDAHDA (one per line)"
+        input.hint = if (type == "NUMBERS") "Paste phone numbers (one per line)" else "Paste patterns (one per line, e.g. HDAHHDAHDAHDA)"
 
         AlertDialog.Builder(this)
             .setTitle(if (type == "NUMBERS") "Paste Phone Numbers" else "Paste Patterns")
@@ -327,7 +328,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 3. BET (The 17 DRAW Anchors - Home, Draw, Away)
+    // 3. BET (Clears previous ticket first -> Applies exact pattern)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -335,10 +336,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // Get this exact account's pattern
         val rawPattern = patternsList[currentIndex % patternsList.size]
         val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
 
-        // 13 picks: H/1 -> 0 (Home), D/X -> 1 (Draw), A/2 -> 2 (Away)
+        // 13 picks: H/1 -> 0, D/X -> 1, A/2 -> 2
         val picks13 = clean.take(13).map { char ->
             when (char) {
                 'H', '1' -> 0
@@ -362,13 +364,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         val picksJsArray = final17Picks.joinToString(prefix = "[", postfix = "]")
+        val currentAccountNum = currentIndex + 1
 
         val betJs = """
             (function() {
-                const picks = $picksJsArray; // Exactly 17 picks (0, 1, or 2)
+                const picks = $picksJsArray; // 17 picks for Account #$currentAccountNum
 
-                // 1. Locate all 17 DRAW buttons across the page
-                // A Draw button strictly contains DRAW and its odds number
+                // Step A: CLEAR ANY PREVIOUS PICKS FROM SCREEN FIRST!
+                let clearBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').trim() === 'Clear');
+                if (clearBtn) {
+                    clearBtn.click();
+                }
+
+                // Step B: Locate all 17 DRAW buttons
                 const allDrawButtons = Array.from(document.querySelectorAll('*')).filter(el => {
                     let txt = (el.innerText || '').trim();
                     let lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
@@ -379,18 +387,18 @@ class MainActivity : AppCompatActivity() {
                     return "WAIT: Found " + allDrawButtons.length + "/17 matches. Wait 2 seconds and tap 3. BET again!";
                 }
 
-                // 2. Click Home, Draw, or Away using the Draw Anchor
+                // Step C: Apply the EXACT pattern for Account #$currentAccountNum
                 for (let i = 0; i < 17; i++) {
                     let drawBtn = allDrawButtons[i];
                     let chosen = picks[i]; // 0=Home, 1=Draw, 2=Away
                     let target = null;
 
                     if (chosen === 0) {
-                        target = drawBtn.previousElementSibling; // Home button to the left
+                        target = drawBtn.previousElementSibling; // Home
                     } else if (chosen === 1) {
-                        target = drawBtn; // Draw button in middle
+                        target = drawBtn; // Draw
                     } else if (chosen === 2) {
-                        target = drawBtn.nextElementSibling; // Away button to the right
+                        target = drawBtn.nextElementSibling; // Away
                     }
 
                     if (target) {
@@ -398,13 +406,13 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // 3. Click Place Bet after 800ms
+                // Step D: Click Place Bet
                 setTimeout(function() {
                     let placeBetBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').includes('Place bet'));
                     if (placeBetBtn) placeBetBtn.click();
                 }, 800);
 
-                return "SUCCESS: Selected 17/17 with pattern: " + "$clean".substring(0, 13);
+                return "SUCCESS: Account #" + $currentAccountNum + " applied pattern: " + "$clean".substring(0, 13);
             })();
         """.trimIndent()
 
@@ -414,10 +422,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT
+    // 4. NEXT (Deep Storage Wipe + Shift to Next Account)
     // ========================================================
     private fun runStep4_LogoutAndNext() {
-        tvStatus.text = "Step 4: Clearing session & loading next account..."
+        tvStatus.text = "Step 4: Clearing session & storage..."
+
+        // Wipe cookies, local storage, and cache
+        WebStorage.getInstance().deleteAllData()
+        webView.clearCache(true)
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.removeAllCookies {
