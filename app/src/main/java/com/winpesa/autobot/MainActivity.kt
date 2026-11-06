@@ -112,7 +112,6 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Load numbers first via ⚙️ DATA!", Toast.LENGTH_SHORT).show()
             return
         }
-
         if (isAutoRunning) {
             isAutoRunning = false
             isStepActive = false
@@ -303,9 +302,6 @@ class MainActivity : AppCompatActivity() {
         updateUI()
     }
 
-    // ========================================================
-    // 1. LOGIN
-    // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
             tvStatus.text = "Error: Load phone numbers first!"
@@ -387,9 +383,6 @@ class MainActivity : AppCompatActivity() {
         execLogin.run()
     }
 
-    // ========================================================
-    // 2. MAHARA
-    // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara page..."
         webView.loadUrl(activeMaharaUrl)
@@ -434,9 +427,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        safeDelay(2000) { checkMahara.run() }// ========================================================
-    // 3. BET (Instant 17 Picks + Single Place Bet Click)
-    // ========================================================
+        safeDelay(2000) { checkMahara.run() }
+    }
+
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
             tvStatus.text = "Error: Load patterns first via ⚙️ DATA"
@@ -504,7 +497,6 @@ class MainActivity : AppCompatActivity() {
         execSelect.run()
     }
 
-    // Locks execution and clicks the Place Bet button exactly once
     private fun triggerPlaceBet(accNum: Int) {
         val clickBetJs = """
             (function() {
@@ -545,9 +537,6 @@ class MainActivity : AppCompatActivity() {
         pollPlaceBet.run()
     }
 
-    // ========================================================
-    // 4. NEXT
-    // ========================================================
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session & loading next..."
         isStepActive = false
