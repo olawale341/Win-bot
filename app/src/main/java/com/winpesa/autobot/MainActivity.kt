@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.View
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -81,13 +82,21 @@ class MainActivity : AppCompatActivity() {
         s.cacheMode = WebSettings.LOAD_DEFAULT
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         s.userAgentString = s.userAgentString.replace("; wv", "")
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 tvStatus.text = "Loaded: $url"
-                if (url != null && url.contains("winpesa.ng")) detectDynamicMaharaLink()
+                if (url != null && url.contains("winpesa.ng")) {
+                    detectDynamicMaharaLink()
+                    // Calm 3.0s breather before next account starts
+                    if (isAutoRunning && url.trimEnd('/') == "https://winpesa.ng") {
+                        tvStatus.text = "Steady Pause: Preparing Account #${currentIndex + 1}..."
+                        handler.postDelayed({ runStep1_Login() }, 3000)
+                    }
+                }
             }
         }
         webView.loadUrl("https://winpesa.ng")
@@ -101,6 +110,7 @@ class MainActivity : AppCompatActivity() {
 
         if (isAutoRunning) {
             isAutoRunning = false
+            handler.removeCallbacksAndMessages(null)
             btnAutoRun.text = "▶️ AUTO"
             btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_green_dark)
             tvStatus.text = "⏸️ Auto-Run Paused."
@@ -108,7 +118,7 @@ class MainActivity : AppCompatActivity() {
             isAutoRunning = true
             btnAutoRun.text = "⏸️ PAUSE"
             btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_red_dark)
-            tvStatus.text = "▶️ Auto-Run: Starting..."
+            tvStatus.text = "▶️ Auto-Run (Steady): Starting Acc #${currentIndex + 1}..."
             runStep1_Login()
         }
     }
@@ -281,7 +291,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN
+    // 1. LOGIN (Steady & Human-Like)
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -308,10 +318,11 @@ class MainActivity : AppCompatActivity() {
                 let pass = document.querySelector('input[placeholder*="Password"], input[type="password"]');
                 if (p && pass) {
                     setReact(p, '$phone'); setReact(pass, '$commonPassword');
+                    // Human pause before clicking Login
                     setTimeout(() => {
                         let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => (b.innerText||'').trim() === 'LOGIN' && b.offsetWidth > 100);
                         if (btn) btn.click();
-                    }, 400);
+                    }, 600);
                     return "SUBMITTED";
                 } else {
                     let h = Array.from(document.querySelectorAll('button, a, div')).find(e => (e.innerText||'').trim() === 'LOGIN');
@@ -323,16 +334,31 @@ class MainActivity : AppCompatActivity() {
 
         webView.evaluateJavascript(script) { res ->
             if (res?.contains("OPENED") == true) {
-                handler.postDelayed({ runStep1_Login() }, 800)
+                handler.postDelayed({ runStep1_Login() }, 1000)
             } else if (res?.contains("SUBMITTED") == true) {
-                tvStatus.text = "Step 1: Logged in $phone!"
-                if (isAutoRunning) handler.postDelayed({ runStep2_OpenMahara() }, 2200)
+                var checks = 0
+                val verify = object : Runnable {
+                    override fun run() {
+                        checks++
+                        val checkJs = "(function(){ return Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT') ? 'LOGGED' : 'WAIT'; })()"
+                        webView.evaluateJavascript(checkJs) { status ->
+                            if (status?.contains("LOGGED") == true || checks >= 8) {
+                                tvStatus.text = "Step 1: Logged in $phone!"
+                                // Steady 2.5s pause before moving to Mahara
+                                if (isAutoRunning) handler.postDelayed({ runStep2_OpenMahara() }, 2500)
+                            } else {
+                                handler.postDelayed(this, 700)
+                            }
+                        }
+                    }
+                }
+                handler.postDelayed(verify, 1000)
             }
         }
     }
 
     // ========================================================
-    // 2. MAHARA
+    // 2. MAHARA (Steady Board Loading)
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara..."
@@ -354,10 +380,27 @@ class MainActivity : AppCompatActivity() {
 
                 webView.evaluateJavascript(js) { res ->
                     if (res?.contains("JUMP") == true) {
-                        tvStatus.text = "Step 2: Inside match board!"
-                        if (isAutoRunning) handler.postDelayed({ runStep3_PickAndBet() }, 2500)
+                        tvStatus.text = "Step 2: Entering match screen..."
+                        var drawAttempts = 0
+                        val checkDraws = object : Runnable {
+                            override fun run() {
+                                drawAttempts++
+                                val countJs = "(function(){ return Array.from(document.querySelectorAll('*')).filter(e => { let l = (e.innerText||'').trim().split('\\n').map(s=>s.trim()).filter(Boolean); return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1])); }).length; })()"
+                                webView.evaluateJavascript(countJs) { countStr ->
+                                    val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
+                                    if (count >= 17) {
+                                        tvStatus.text = "Step 2: All 17 matches ready!"
+                                        // Steady 2.5s pause so you can see the board clearly
+                                        if (isAutoRunning) handler.postDelayed({ runStep3_PickAndBet() }, 2500)
+                                    } else if (drawAttempts < 25) {
+                                        handler.postDelayed(this, 700)
+                                    }
+                                }
+                            }
+                        }
+                        handler.postDelayed(checkDraws, 1500)
                     } else if (attempts < 22) {
-                        handler.postDelayed(this, 700)
+                        handler.postDelayed(this, 800)
                     }
                 }
             }
@@ -365,7 +408,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 3. BET (The 100% Proven Single-Click DRAW Anchor)
+    // 3. BET (Smooth 70ms Cadence + Confirmed Place Bet)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -377,71 +420,53 @@ class MainActivity : AppCompatActivity() {
         val rawPattern = patternsList[currentIndex % patternsList.size]
         val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
 
-        // 13 picks: H/1 -> 0 (Home), D/X -> 1 (Draw), A/2 -> 2 (Away)
-        val picks13 = clean.take(13).map { char ->
-            when (char) {
-                'H', '1' -> 0
-                'D', 'X' -> 1
-                'A', '2' -> 2
-                else -> 0
-            }
-        }.toMutableList()
+        val safe13 = clean.take(13).toMutableList()
+        while (safe13.size < 13) safe13.add(listOf('H', 'D', 'A').random())
 
-        val final17Picks = if (clean.length >= 17) {
-            picks13 + clean.substring(13, 17).map { char ->
-                when (char) {
-                    'H', '1' -> 0
-                    'D', 'X' -> 1
-                    'A', '2' -> 2
-                    else -> 0
-                }
-            }
+        val picks13 = safe13.map { if (it == 'D' || it == 'X') 1 else if (it == 'A' || it == '2') 2 else 0 }
+        val final17 = if (clean.length >= 17) {
+            picks13 + clean.substring(13, 17).map { if (it == 'D' || it == 'X') 1 else if (it == 'A' || it == '2') 2 else 0 }
         } else {
             picks13 + List(4) { listOf(0, 1, 2).random() }
         }
 
-        val picksJsArray = final17Picks.joinToString(prefix = "[", postfix = "]")
+        val jsArray = final17.joinToString(prefix = "[", postfix = "]")
         val accNum = currentIndex + 1
 
         val betJs = """
             (function() {
-                const picks = $picksJsArray; // 17 picks (0, 1, or 2)
+                const picks = $jsArray;
 
-                // Locate all 17 DRAW buttons
-                const allDrawButtons = Array.from(document.querySelectorAll('*')).filter(el => {
-                    let txt = (el.innerText || '').trim();
-                    let lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
-                    return lines.length === 2 && lines[0] === 'DRAW' && !isNaN(parseFloat(lines[1]));
+                                const draws = Array.from(document.querySelectorAll('*')).filter(e => {
+                    let l = (e.innerText||'').trim().split('\n').map(s => s.trim()).filter(Boolean);
+                    return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1]));
                 });
 
-                if (allDrawButtons.length < 17) {
-                    return "WAIT_RETRY:" + allDrawButtons.length;
-                }
+                if (draws.length < 17) return "WAIT_RETRY:" + draws.length;
 
-                // Click Home, Draw, or Away once (no double-click!)
-                for (let i = 0; i < 17; i++) {
-                    let drawBtn = allDrawButtons[i];
-                    let chosen = picks[i];
-                    let target = null;
+                // Steady, visible 70ms rhythm down the 17 matches
+                picks.forEach((ch, i) => {
+                    setTimeout(() => {
+                        let d = draws[i];
+                        let target = (ch === 0 ? d.previousElementSibling : (ch === 1 ? d : d.nextElementSibling));
+                        if (target) target.click();
+                    }, i * 70);
+                });
 
-                    if (chosen === 0) {
-                        target = drawBtn.previousElementSibling;
-                    } else if (chosen === 1) {
-                        target = drawBtn;
-                    } else if (chosen === 2) {
-                        target = drawBtn.nextElementSibling;
-                    }
-
-                    if (target) {
-                        target.click();
-                    }
-                }
-
-                // Click Place Bet after 800ms
-                setTimeout(function() {
-                    let placeBetBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').includes('Place bet'));
-                    if (placeBetBtn) placeBetBtn.click();
-                }, 800);
+                // Calm 1.5s pause after match 17 before tapping Place Bet
+                setTimeout(() => {
+                    let attempts = 0;
+                    let timer = setInterval(() => {
+                        attempts++;
+                        let pb = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').includes('Place bet') && e.offsetWidth > 40);
+                        if (pb) {
+                            pb.click();
+                            clearInterval(timer);
+                        } else if (attempts > 18) {
+                            clearInterval(timer);
+                        }
+                    }, 250);
+                }, (17 * 70) + 1500);
 
                 return "SUCCESS: Acc #" + $accNum + " applied " + "$clean".substring(0, Math.min(13, "$clean".length));
             })();
@@ -457,8 +482,9 @@ class MainActivity : AppCompatActivity() {
                         handler.postDelayed(this, 700)
                     } else {
                         tvStatus.text = "Step 3: $res"
+                        // Steady 4.5s pause to ensure ticket confirmation lands on the server
                         if (isAutoRunning && res?.contains("SUCCESS") == true) {
-                            handler.postDelayed({ runStep4_LogoutAndNext() }, 2800)
+                            handler.postDelayed({ runStep4_LogoutAndNext() }, 4500)
                         }
                     }
                 }
@@ -468,9 +494,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT
+    // 4. NEXT (Deep Storage Wipe & Calm Reload)
     // ========================================================
-     private fun runStep4_LogoutAndNext() {
+    private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session & loading next..."
         WebStorage.getInstance().deleteAllData()
         webView.clearCache(true)
@@ -486,7 +512,7 @@ class MainActivity : AppCompatActivity() {
                         currentIndex = 0
                         saveData()
                         updateUI()
-                        tvStatus.text = "ALL ACCOUNTS COMPLETED! 🎉"
+                        tvStatus.text = "ALL ACCOUNTS COMPLETED! 🎉 Ready for next week."
                         if (isAutoRunning) toggleAutoRun()
                         return@runOnUiThread
                     }
@@ -494,10 +520,6 @@ class MainActivity : AppCompatActivity() {
                 saveData()
                 updateUI()
                 webView.loadUrl("https://winpesa.ng")
-
-                if (isAutoRunning) {
-                    handler.postDelayed({ runStep1_Login() }, 2200)
-                }
             }
         }
     }
