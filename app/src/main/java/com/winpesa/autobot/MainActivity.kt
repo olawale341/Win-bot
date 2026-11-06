@@ -302,6 +302,9 @@ class MainActivity : AppCompatActivity() {
         updateUI()
     }
 
+    // ========================================================
+    // 1. LOGIN (With Self-Healing Auto-Fill Guard)
+    // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
             tvStatus.text = "Error: Load phone numbers first!"
@@ -316,10 +319,12 @@ class MainActivity : AppCompatActivity() {
         val script = """
             (function() {
                 function setReact(input, val) {
+                    input.focus();
                     let old = input.value; input.value = val;
                     let trk = input._valueTracker; if (trk) trk.setValue(old);
                     input.dispatchEvent(new Event('input', { bubbles: true }));
                     input.dispatchEvent(new Event('change', { bubbles: true }));
+                    input.dispatchEvent(new Event('blur', { bubbles: true }));
                 }
 
                 Array.from(document.querySelectorAll('button, div, span, svg, i')).forEach(e => {
@@ -333,14 +338,24 @@ class MainActivity : AppCompatActivity() {
                 let pass = document.querySelector('input[placeholder*="Password"], input[type="password"]');
 
                 if (p && pass) {
-                    setReact(p, '$phone'); setReact(pass, '$commonPassword');
+                    setReact(p, '$phone');
+                    setReact(pass, '$commonPassword');
+
+                    // Only click submit if phone is actually inside the box!
                     setTimeout(() => {
-                        let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => (b.innerText||'').trim() === 'LOGIN' && b.offsetWidth > 80);
-                        if (btn) btn.click();
+                        let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => {
+                            let t = (b.innerText||'').trim();
+                            return t === 'LOGIN' && b.offsetWidth > 150;
+                        });
+                        if (btn && p.value.length >= 10) btn.click();
                     }, 1200);
                     return "SUBMITTED";
                 } else {
-                    let h = Array.from(document.querySelectorAll('button, a, div')).find(e => (e.innerText||'').trim() === 'LOGIN');
+                    // Small header login button only (prevents clicking empty form submit!)
+                    let h = Array.from(document.querySelectorAll('button, a, div')).find(e => {
+                        let t = (e.innerText||'').trim();
+                        return t === 'LOGIN' && e.offsetWidth < 120;
+                    });
                     if (h) { h.click(); return "OPENED"; }
                     return "WAIT_MODAL";
                 }
@@ -360,11 +375,24 @@ class MainActivity : AppCompatActivity() {
                         val verify = object : Runnable {
                             override fun run() {
                                 verifyChecks++
-                                val checkJs = "(function(){ return Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT') ? 'LOGGED' : 'WAIT'; })()"
+                                val checkJs = """
+                                    (function() {
+                                        let err = document.body.innerText.includes('Phone must be 10');
+                                        let logged = Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT');
+                                        if (logged) return 'LOGGED';
+                                        if (err) return 'REFILL_NEEDED';
+                                        return 'WAIT';
+                                    })()
+                                """.trimIndent()
+
                                 webView.evaluateJavascript(checkJs) { status ->
                                     if (status?.contains("LOGGED") == true || verifyChecks >= 12) {
                                         tvStatus.text = "Step 1: Logged in $phone!"
                                         if (isAutoRunning) safeDelay(3000) { runStep2_OpenMahara() }
+                                    } else if (status?.contains("REFILL_NEEDED") == true) {
+                                        // Self-healing: auto-pauses, refills, and resubmits immediately!
+                                        tvStatus.text = "Step 1: Self-healing glitch, auto-refilling $phone..."
+                                        handler.postDelayed({ runStep1_Login() }, 1000)
                                     } else {
                                         handler.postDelayed(this, 1000)
                                     }
@@ -383,6 +411,9 @@ class MainActivity : AppCompatActivity() {
         execLogin.run()
     }
 
+    // ========================================================
+    // 2. MAHARA
+    // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara page..."
         webView.loadUrl(activeMaharaUrl)
@@ -430,6 +461,9 @@ class MainActivity : AppCompatActivity() {
         safeDelay(2000) { checkMahara.run() }
     }
 
+    // ========================================================
+    // 3. BET (Instant 17 Picks + Single Place Bet Click)
+    // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
             tvStatus.text = "Error: Load patterns first via ⚙️ DATA"
@@ -537,6 +571,9 @@ class MainActivity : AppCompatActivity() {
         pollPlaceBet.run()
     }
 
+    // ========================================================
+    // 4. NEXT
+    // ========================================================
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session & loading next..."
         isStepActive = false
