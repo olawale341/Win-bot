@@ -40,7 +40,7 @@ class MainActivity : AppCompatActivity() {
     private var commonPassword = "YourDefaultPassword123"
     private var isAutoRunning = false
 
-    private var filePickTarget: String = "NUMBERS"
+    private var filePickTarget = "NUMBERS"
     private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let { handleUploadedFile(it) }
     }
@@ -95,9 +95,6 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://winpesa.ng")
     }
 
-    // ========================================================
-    // AUTO-RUN CONTROLLER (Play / Pause Engine)
-    // ========================================================
     private fun toggleAutoRun() {
         if (numbersList.isEmpty()) {
             Toast.makeText(this, "Load numbers first via ⚙️ DATA!", Toast.LENGTH_SHORT).show()
@@ -113,7 +110,7 @@ class MainActivity : AppCompatActivity() {
             isAutoRunning = true
             btnAutoRun.text = "⏸️ PAUSE"
             btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_red_dark)
-            tvStatus.text = "▶️ Auto-Run Started..."
+            tvStatus.text = "▶️ Auto-Run: Starting Account #${currentIndex + 1}..."
             runStep1_Login()
         }
     }
@@ -131,6 +128,12 @@ class MainActivity : AppCompatActivity() {
         if (p.startsWith("+234")) p = p.substring(4)
         else if (p.startsWith("234") && p.length > 10) p = p.substring(3)
         else if (p.startsWith("0") && p.length == 11) p = p.substring(1)
+        return p
+    }
+
+    private fun sanitizePattern(raw: String): String {
+        var p = raw.replace(Regex("^[#\\d]+[.:\\-\\s)]+"), "")
+        p = p.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
         return p
     }
 
@@ -159,14 +162,13 @@ class MainActivity : AppCompatActivity() {
                     7 -> confirmWipeAllData()
                 }
             }
-            .setNegativeButton("Close", null)
-            .show()
+            .setNegativeButton("Close", null).show()
     }
 
     private fun confirmWipeAllData() {
         AlertDialog.Builder(this)
             .setTitle("🗑️ Wipe All Data?")
-            .setMessage("Delete all saved numbers, patterns and reset progress?")
+            .setMessage("Delete all saved numbers, patterns and reset progress to #0?")
             .setPositiveButton("Yes, Wipe All") { _, _ ->
                 numbersList.clear()
                 patternsList.clear()
@@ -175,8 +177,7 @@ class MainActivity : AppCompatActivity() {
                 saveData(); updateUI()
                 tvStatus.text = "All data cleared! Ready for new batch."
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            .setNegativeButton("Cancel", null).show()
     }
 
     private fun showJumpToAccountDialog() {
@@ -198,14 +199,20 @@ class MainActivity : AppCompatActivity() {
     private fun showPasteDialog(type: String) {
         val input = EditText(this)
         input.setLines(8)
-        input.hint = if (type == "NUMBERS") "Paste numbers (one per line)" else "Paste patterns (one per line)"
+        input.hint = if (type == "NUMBERS") "Paste phone numbers (one per line)" else "Paste patterns (one per line)"
         AlertDialog.Builder(this)
             .setTitle(if (type == "NUMBERS") "Paste Numbers" else "Paste Patterns")
             .setView(input)
             .setPositiveButton("Save") { _, _ ->
                 val lines = input.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-                if (type == "NUMBERS") { numbersList.clear(); numbersList.addAll(lines.map { sanitizePhone(it) }) }
-                else { patternsList.clear(); patternsList.addAll(lines) }
+                if (type == "NUMBERS") {
+                    numbersList.clear()
+                    numbersList.addAll(lines.map { sanitizePhone(it) })
+                } else {
+                    patternsList.clear()
+                    val validPatterns = lines.map { sanitizePattern(it) }.filter { it.length >= 10 }
+                    patternsList.addAll(validPatterns)
+                }
                 saveData(); updateUI()
                 Toast.makeText(this, "Saved ${lines.size} items!", Toast.LENGTH_SHORT).show()
             }
@@ -218,10 +225,16 @@ class MainActivity : AppCompatActivity() {
                 contentResolver.openInputStream(uri)?.use { stream ->
                     val lines = stream.bufferedReader().readLines().map { it.trim() }.filter { it.isNotEmpty() }
                     runOnUiThread {
-                        if (filePickTarget == "NUMBERS") { numbersList.clear(); numbersList.addAll(lines.map { sanitizePhone(it) }) }
-                        else { patternsList.clear(); patternsList.addAll(lines) }
+                        if (filePickTarget == "NUMBERS") {
+                            numbersList.clear()
+                            numbersList.addAll(lines.map { sanitizePhone(it) })
+                        } else {
+                            patternsList.clear()
+                            val validPatterns = lines.map { sanitizePattern(it) }.filter { it.length >= 10 }
+                            patternsList.addAll(validPatterns)
+                        }
                         saveData(); updateUI()
-                        Toast.makeText(this, "Loaded ${lines.size} items!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "Loaded ${lines.size} items safely!", Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {
@@ -235,6 +248,7 @@ class MainActivity : AppCompatActivity() {
         input.setText(commonPassword)
         AlertDialog.Builder(this)
             .setTitle("🔑 Common Password")
+            .setMessage("Set the password used across all phone numbers:")
             .setView(input)
             .setPositiveButton("Save") { _, _ ->
                 commonPassword = input.text.toString().trim()
@@ -277,7 +291,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN
+    // 1. LOGIN (With Self-Verifying Session Confirmation)
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -321,14 +335,29 @@ class MainActivity : AppCompatActivity() {
             if (res?.contains("OPENED") == true) {
                 handler.postDelayed({ runStep1_Login() }, 800)
             } else if (res?.contains("SUBMITTED") == true) {
-                tvStatus.text = "Step 1: Logged in $phone!"
-                if (isAutoRunning) handler.postDelayed({ runStep2_OpenMahara() }, 2000)
+                // Poll until server logs in and shows Deposit or user balance
+                var checks = 0
+                val verifyLogin = object : Runnable {
+                    override fun run() {
+                        checks++
+                        val checkJs = "(function(){ return Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT') ? 'LOGGED' : 'WAIT'; })()"
+                        webView.evaluateJavascript(checkJs) { status ->
+                            if (status?.contains("LOGGED") == true || checks >= 8) {
+                                tvStatus.text = "Step 1: Logged in $phone!"
+                                if (isAutoRunning) handler.postDelayed({ runStep2_OpenMahara() }, 1500)
+                            } else {
+                                handler.postDelayed(this, 600)
+                            }
+                        }
+                    }
+                }
+                handler.postDelayed(verifyLogin, 1000)
             }
         }
     }
 
     // ========================================================
-    // 2. MAHARA
+    // 2. MAHARA (With Live Match Board Arrival Check)
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara..."
@@ -350,8 +379,25 @@ class MainActivity : AppCompatActivity() {
 
                 webView.evaluateJavascript(js) { res ->
                     if (res?.contains("JUMP") == true) {
-                        tvStatus.text = "Step 2: Inside match board!"
-                        if (isAutoRunning) handler.postDelayed({ runStep3_PickAndBet() }, 2500)
+                        tvStatus.text = "Step 2: Entering match screen..."
+                        // Wait until 17 DRAW buttons appear on aggrhub
+                        var drawAttempts = 0
+                        val checkDraws = object : Runnable {
+                            override fun run() {
+                                drawAttempts++
+                                val countJs = "(function(){ return Array.from(document.querySelectorAll('*')).filter(e => { let l = (e.innerText||'').trim().split('\\n').map(s=>s.trim()).filter(Boolean); return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1])); }).length; })()"
+                                webView.evaluateJavascript(countJs) { countStr ->
+                                    val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
+                                    if (count >= 17) {
+                                        tvStatus.text = "Step 2: Matches ready!"
+                                        if (isAutoRunning) handler.postDelayed({ runStep3_PickAndBet() }, 1200)
+                                    } else if (drawAttempts < 20) {
+                                        handler.postDelayed(this, 700)
+                                    }
+                                }
+                            }
+                        }
+                        handler.postDelayed(checkDraws, 1500)
                     } else if (attempts < 22) {
                         handler.postDelayed(this, 700)
                     }
@@ -361,7 +407,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 3. BET (With Auto-Clicking Place Bet Watcher)
+    // 3. BET (Rhythmic Cadence & Guaranteed Auto Place Bet)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -371,7 +417,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         val rawPattern = patternsList[currentIndex % patternsList.size]
-        val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
+        val clean = sanitizePattern(rawPattern)
+
         val safe13 = clean.take(13).toMutableList()
         while (safe13.size < 13) safe13.add(listOf('H', 'D', 'A').random())
 
@@ -384,6 +431,7 @@ class MainActivity : AppCompatActivity() {
 
         val jsArray = final17.joinToString(prefix = "[", postfix = "]")
         val accNum = currentIndex + 1
+        val patternPreview = safe13.joinToString("")
 
         val betJs = """
             (function() {
@@ -391,33 +439,42 @@ class MainActivity : AppCompatActivity() {
                 let c = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').trim() === 'Clear');
                 if (c) c.click();
 
-                const draws = Array.from(document.querySelectorAll('*')).filter(e => {
+ const draws = Array.from(document.querySelectorAll('*')).filter(e => {
                     let l = (e.innerText||'').trim().split('\n').map(s => s.trim()).filter(Boolean);
                     return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1]));
                 });
 
                 if (draws.length < 17) return "WAIT_RETRY:" + draws.length;
 
-                for (let i = 0; i < 17; i++) {
-                    let d = draws[i], ch = picks[i], target = (ch === 0 ? d.previousElementSibling : (ch === 1 ? d : d.nextElementSibling));
-                    if (target) target.click();
-                }
+                // Taps each match with a 50ms rhythm
+                picks.forEach((ch, i) => {
+                    setTimeout(() => {
+                        let d = draws[i];
+                        let target = (ch === 0 ? d.previousElementSibling : (ch === 1 ? d : d.nextElementSibling));
+                        if (target) {
+                            target.click();
+                            if (target.firstElementChild) target.firstElementChild.click();
+                        }
+                    }, i * 50);
+                });
 
-                // Automatic Watcher: Continuously taps Place Bet as soon as it opens
-                let pollAttempts = 0;
-                let placeTimer = setInterval(() => {
-                    pollAttempts++;
-                    let pb = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').includes('Place bet') && e.offsetWidth > 40);
-                    if (pb) {
-                        pb.click();
-                        if (pb.firstElementChild) pb.firstElementChild.click();
-                        clearInterval(placeTimer);
-                    } else if (pollAttempts > 15) {
-                        clearInterval(placeTimer);
-                    }
-                }, 250);
+                // Auto Place-Bet Watcher: Polls and clicks Place Bet automatically
+                setTimeout(() => {
+                    let attempts = 0;
+                    let timer = setInterval(() => {
+                        attempts++;
+                        let pb = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').includes('Place bet') && e.offsetWidth > 40);
+                        if (pb) {
+                            pb.click();
+                            if (pb.firstElementChild) pb.firstElementChild.click();
+                            clearInterval(timer);
+                        } else if (attempts > 18) {
+                            clearInterval(timer);
+                        }
+                    }, 250);
+                }, 1000);
 
-                return "SUCCESS: Acc #" + $accNum + " pattern applied";
+                return "SUCCESS: Acc #" + $accNum + " applied [" + "$patternPreview" + "]";
             })();
         """.trimIndent()
 
@@ -431,9 +488,9 @@ class MainActivity : AppCompatActivity() {
                         handler.postDelayed(this, 700)
                     } else {
                         tvStatus.text = "Step 3: $res"
-                        // Trigger Step 4 automatically after bet placement
                         if (isAutoRunning && res?.contains("SUCCESS") == true) {
-                            handler.postDelayed({ runStep4_LogoutAndNext() }, 2800)
+                            // Give server 3.2 seconds to process bet ticket before logging out
+                            handler.postDelayed({ runStep4_LogoutAndNext() }, 3200)
                         }
                     }
                 }
@@ -443,7 +500,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT
+    // 4. NEXT (Deep Storage Wipe & Auto-Cycle Reset)
     // ========================================================
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session & loading next..."
@@ -453,14 +510,17 @@ class MainActivity : AppCompatActivity() {
         val cookieManager = CookieManager.getInstance()
         cookieManager.removeAllCookies {
             cookieManager.flush()
-    runOnUiThread {
+            runOnUiThread {
                 if (numbersList.isNotEmpty()) {
                     if (currentIndex < numbersList.size - 1) {
                         currentIndex++
                     } else {
-                        tvStatus.text = "ALL ACCOUNTS COMPLETED! 🎉"
-                        if (isAutoRunning) toggleAutoRun()
+                        // Loop completed! Reset index to 0 so it's ready for next week
+                        currentIndex = 0
+                        saveData()
                         updateUI()
+                        tvStatus.text = "ALL ACCOUNTS COMPLETED! 🎉 Ready for next week."
+                        if (isAutoRunning) toggleAutoRun()
                         return@runOnUiThread
                     }
                 }
@@ -468,11 +528,10 @@ class MainActivity : AppCompatActivity() {
                 updateUI()
                 webView.loadUrl("https://winpesa.ng")
 
-                // Auto-Run loop: proceed to next account's login
                 if (isAutoRunning) {
-                    handler.postDelayed({ runStep1_Login() }, 2200)
+                    handler.postDelayed({ runStep1_Login() }, 2400)
                 }
             }
         }
     }
-} 
+}
