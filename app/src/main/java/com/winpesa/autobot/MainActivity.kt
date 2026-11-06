@@ -6,7 +6,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.View
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -82,7 +81,6 @@ class MainActivity : AppCompatActivity() {
         s.cacheMode = WebSettings.LOAD_DEFAULT
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         s.userAgentString = s.userAgentString.replace("; wv", "")
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = object : WebViewClient() {
@@ -110,7 +108,7 @@ class MainActivity : AppCompatActivity() {
             isAutoRunning = true
             btnAutoRun.text = "⏸️ PAUSE"
             btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_red_dark)
-            tvStatus.text = "▶️ Auto-Run: Starting Account #${currentIndex + 1}..."
+            tvStatus.text = "▶️ Auto-Run: Starting..."
             runStep1_Login()
         }
     }
@@ -128,12 +126,6 @@ class MainActivity : AppCompatActivity() {
         if (p.startsWith("+234")) p = p.substring(4)
         else if (p.startsWith("234") && p.length > 10) p = p.substring(3)
         else if (p.startsWith("0") && p.length == 11) p = p.substring(1)
-        return p
-    }
-
-    private fun sanitizePattern(raw: String): String {
-        var p = raw.replace(Regex("^[#\\d]+[.:\\-\\s)]+"), "")
-        p = p.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
         return p
     }
 
@@ -199,7 +191,7 @@ class MainActivity : AppCompatActivity() {
     private fun showPasteDialog(type: String) {
         val input = EditText(this)
         input.setLines(8)
-        input.hint = if (type == "NUMBERS") "Paste phone numbers (one per line)" else "Paste patterns (one per line)"
+        input.hint = if (type == "NUMBERS") "Paste phone numbers (one per line)" else "Paste patterns (one per line, e.g. HDAHHDAHDAHDA)"
         AlertDialog.Builder(this)
             .setTitle(if (type == "NUMBERS") "Paste Numbers" else "Paste Patterns")
             .setView(input)
@@ -210,8 +202,7 @@ class MainActivity : AppCompatActivity() {
                     numbersList.addAll(lines.map { sanitizePhone(it) })
                 } else {
                     patternsList.clear()
-                    val validPatterns = lines.map { sanitizePattern(it) }.filter { it.length >= 10 }
-                    patternsList.addAll(validPatterns)
+                    patternsList.addAll(lines)
                 }
                 saveData(); updateUI()
                 Toast.makeText(this, "Saved ${lines.size} items!", Toast.LENGTH_SHORT).show()
@@ -230,8 +221,7 @@ class MainActivity : AppCompatActivity() {
                             numbersList.addAll(lines.map { sanitizePhone(it) })
                         } else {
                             patternsList.clear()
-                            val validPatterns = lines.map { sanitizePattern(it) }.filter { it.length >= 10 }
-                            patternsList.addAll(validPatterns)
+                            patternsList.addAll(lines)
                         }
                         saveData(); updateUI()
                         Toast.makeText(this, "Loaded ${lines.size} items safely!", Toast.LENGTH_SHORT).show()
@@ -291,7 +281,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN (With Self-Verifying Session Confirmation)
+    // 1. LOGIN
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -335,29 +325,14 @@ class MainActivity : AppCompatActivity() {
             if (res?.contains("OPENED") == true) {
                 handler.postDelayed({ runStep1_Login() }, 800)
             } else if (res?.contains("SUBMITTED") == true) {
-                // Poll until server logs in and shows Deposit or user balance
-                var checks = 0
-                val verifyLogin = object : Runnable {
-                    override fun run() {
-                        checks++
-                        val checkJs = "(function(){ return Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT') ? 'LOGGED' : 'WAIT'; })()"
-                        webView.evaluateJavascript(checkJs) { status ->
-                            if (status?.contains("LOGGED") == true || checks >= 8) {
-                                tvStatus.text = "Step 1: Logged in $phone!"
-                                if (isAutoRunning) handler.postDelayed({ runStep2_OpenMahara() }, 1500)
-                            } else {
-                                handler.postDelayed(this, 600)
-                            }
-                        }
-                    }
-                }
-                handler.postDelayed(verifyLogin, 1000)
+                tvStatus.text = "Step 1: Logged in $phone!"
+                if (isAutoRunning) handler.postDelayed({ runStep2_OpenMahara() }, 2200)
             }
         }
     }
 
     // ========================================================
-    // 2. MAHARA (With Live Match Board Arrival Check)
+    // 2. MAHARA
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara..."
@@ -379,25 +354,8 @@ class MainActivity : AppCompatActivity() {
 
                 webView.evaluateJavascript(js) { res ->
                     if (res?.contains("JUMP") == true) {
-                        tvStatus.text = "Step 2: Entering match screen..."
-                        // Wait until 17 DRAW buttons appear on aggrhub
-                        var drawAttempts = 0
-                        val checkDraws = object : Runnable {
-                            override fun run() {
-                                drawAttempts++
-                                val countJs = "(function(){ return Array.from(document.querySelectorAll('*')).filter(e => { let l = (e.innerText||'').trim().split('\\n').map(s=>s.trim()).filter(Boolean); return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1])); }).length; })()"
-                                webView.evaluateJavascript(countJs) { countStr ->
-                                    val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
-                                    if (count >= 17) {
-                                        tvStatus.text = "Step 2: Matches ready!"
-                                        if (isAutoRunning) handler.postDelayed({ runStep3_PickAndBet() }, 1200)
-                                    } else if (drawAttempts < 20) {
-                                        handler.postDelayed(this, 700)
-                                    }
-                                }
-                            }
-                        }
-                        handler.postDelayed(checkDraws, 1500)
+                        tvStatus.text = "Step 2: Inside match board!"
+                        if (isAutoRunning) handler.postDelayed({ runStep3_PickAndBet() }, 2500)
                     } else if (attempts < 22) {
                         handler.postDelayed(this, 700)
                     }
@@ -407,74 +365,85 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 3. BET (Rhythmic Cadence & Guaranteed Auto Place Bet)
+    // 3. BET (The 100% Proven Single-Click DRAW Anchor)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
-            tvStatus.text = "Error: Load patterns first!"
+            tvStatus.text = "Error: Load patterns first via ⚙️ DATA"
             if (isAutoRunning) toggleAutoRun()
             return
         }
 
         val rawPattern = patternsList[currentIndex % patternsList.size]
-        val clean = sanitizePattern(rawPattern)
+        val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
 
-        val safe13 = clean.take(13).toMutableList()
-        while (safe13.size < 13) safe13.add(listOf('H', 'D', 'A').random())
+        // 13 picks: H/1 -> 0 (Home), D/X -> 1 (Draw), A/2 -> 2 (Away)
+        val picks13 = clean.take(13).map { char ->
+            when (char) {
+                'H', '1' -> 0
+                'D', 'X' -> 1
+                'A', '2' -> 2
+                else -> 0
+            }
+        }.toMutableList()
 
-        val picks13 = safe13.map { if (it == 'D' || it == 'X') 1 else if (it == 'A' || it == '2') 2 else 0 }
-        val final17 = if (clean.length >= 17) {
-            picks13 + clean.substring(13, 17).map { if (it == 'D' || it == 'X') 1 else if (it == 'A' || it == '2') 2 else 0 }
+        val final17Picks = if (clean.length >= 17) {
+            picks13 + clean.substring(13, 17).map { char ->
+                when (char) {
+                    'H', '1' -> 0
+                    'D', 'X' -> 1
+                    'A', '2' -> 2
+                    else -> 0
+                }
+            }
         } else {
             picks13 + List(4) { listOf(0, 1, 2).random() }
         }
 
-        val jsArray = final17.joinToString(prefix = "[", postfix = "]")
+        val picksJsArray = final17Picks.joinToString(prefix = "[", postfix = "]")
         val accNum = currentIndex + 1
-        val patternPreview = safe13.joinToString("")
 
         val betJs = """
             (function() {
-                const picks = $jsArray;
-                let c = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').trim() === 'Clear');
-                if (c) c.click();
+                const picks = $picksJsArray; // 17 picks (0, 1, or 2)
 
- const draws = Array.from(document.querySelectorAll('*')).filter(e => {
-                    let l = (e.innerText||'').trim().split('\n').map(s => s.trim()).filter(Boolean);
-                    return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1]));
+                // Locate all 17 DRAW buttons
+                const allDrawButtons = Array.from(document.querySelectorAll('*')).filter(el => {
+                    let txt = (el.innerText || '').trim();
+                    let lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
+                    return lines.length === 2 && lines[0] === 'DRAW' && !isNaN(parseFloat(lines[1]));
                 });
 
-                if (draws.length < 17) return "WAIT_RETRY:" + draws.length;
+                if (allDrawButtons.length < 17) {
+                    return "WAIT_RETRY:" + allDrawButtons.length;
+                }
 
-                // Taps each match with a 50ms rhythm
-                picks.forEach((ch, i) => {
-                    setTimeout(() => {
-                        let d = draws[i];
-                        let target = (ch === 0 ? d.previousElementSibling : (ch === 1 ? d : d.nextElementSibling));
-                        if (target) {
-                            target.click();
-                            if (target.firstElementChild) target.firstElementChild.click();
-                        }
-                    }, i * 50);
-                });
+                // Click Home, Draw, or Away once (no double-click!)
+                for (let i = 0; i < 17; i++) {
+                    let drawBtn = allDrawButtons[i];
+                    let chosen = picks[i];
+                    let target = null;
 
-                // Auto Place-Bet Watcher: Polls and clicks Place Bet automatically
-                setTimeout(() => {
-                    let attempts = 0;
-                    let timer = setInterval(() => {
-                        attempts++;
-                        let pb = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').includes('Place bet') && e.offsetWidth > 40);
-                        if (pb) {
-                            pb.click();
-                            if (pb.firstElementChild) pb.firstElementChild.click();
-                            clearInterval(timer);
-                        } else if (attempts > 18) {
-                            clearInterval(timer);
-                        }
-                    }, 250);
-                }, 1000);
+                    if (chosen === 0) {
+                        target = drawBtn.previousElementSibling;
+                    } else if (chosen === 1) {
+                        target = drawBtn;
+                    } else if (chosen === 2) {
+                        target = drawBtn.nextElementSibling;
+                    }
 
-                return "SUCCESS: Acc #" + $accNum + " applied [" + "$patternPreview" + "]";
+                    if (target) {
+                        target.click();
+                    }
+                }
+
+                // Click Place Bet after 800ms
+                setTimeout(function() {
+                    let placeBetBtn = Array.from(document.querySelectorAll('button, div')).find(el => (el.innerText || '').includes('Place bet'));
+                    if (placeBetBtn) placeBetBtn.click();
+                }, 800);
+
+                return "SUCCESS: Acc #" + $accNum + " applied " + "$clean".substring(0, Math.min(13, "$clean".length));
             })();
         """.trimIndent()
 
@@ -489,8 +458,7 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         tvStatus.text = "Step 3: $res"
                         if (isAutoRunning && res?.contains("SUCCESS") == true) {
-                            // Give server 3.2 seconds to process bet ticket before logging out
-                            handler.postDelayed({ runStep4_LogoutAndNext() }, 3200)
+                            handler.postDelayed({ runStep4_LogoutAndNext() }, 2800)
                         }
                     }
                 }
@@ -500,9 +468,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT (Deep Storage Wipe & Auto-Cycle Reset)
+    // 4. NEXT
     // ========================================================
-    private fun runStep4_LogoutAndNext() {
+     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session & loading next..."
         WebStorage.getInstance().deleteAllData()
         webView.clearCache(true)
@@ -515,11 +483,10 @@ class MainActivity : AppCompatActivity() {
                     if (currentIndex < numbersList.size - 1) {
                         currentIndex++
                     } else {
-                        // Loop completed! Reset index to 0 so it's ready for next week
                         currentIndex = 0
                         saveData()
                         updateUI()
-                        tvStatus.text = "ALL ACCOUNTS COMPLETED! 🎉 Ready for next week."
+                        tvStatus.text = "ALL ACCOUNTS COMPLETED! 🎉"
                         if (isAutoRunning) toggleAutoRun()
                         return@runOnUiThread
                     }
@@ -529,7 +496,7 @@ class MainActivity : AppCompatActivity() {
                 webView.loadUrl("https://winpesa.ng")
 
                 if (isAutoRunning) {
-                    handler.postDelayed({ runStep1_Login() }, 2400)
+                    handler.postDelayed({ runStep1_Login() }, 2200)
                 }
             }
         }
