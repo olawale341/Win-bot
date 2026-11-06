@@ -39,8 +39,6 @@ class MainActivity : AppCompatActivity() {
     private var currentIndex = 0
     private var commonPassword = "YourDefaultPassword123"
     private var isAutoRunning = false
-
-    // State lock prevents duplicate timer execution
     private var isProcessingStep = false
 
     private var filePickTarget = "NUMBERS"
@@ -94,9 +92,8 @@ class MainActivity : AppCompatActivity() {
                 tvStatus.text = "Loaded: $url"
                 if (url != null && url.contains("winpesa.ng")) {
                     detectDynamicMaharaLink()
-                    // Only start login if auto-run is waiting for homepage
                     if (isAutoRunning && !isProcessingStep && url.trimEnd('/') == "https://winpesa.ng") {
-                        tvStatus.text = "Network Ready: Starting Account #${currentIndex + 1}..."
+                        tvStatus.text = "Steady Pause: Starting Account #${currentIndex + 1}..."
                         safePostDelayed(3000) { runStep1_Login() }
                     }
                 }
@@ -105,7 +102,6 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://winpesa.ng")
     }
 
-    // Helper: clears old timers before scheduling a new one
     private fun safePostDelayed(delayMs: Long, action: () -> Unit) {
         handler.removeCallbacksAndMessages(null)
         handler.postDelayed({ action() }, delayMs)
@@ -308,7 +304,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN
+    // 1. LOGIN (Active Retry Watcher - Never Stalls)
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -329,48 +325,69 @@ class MainActivity : AppCompatActivity() {
                     input.dispatchEvent(new Event('input', { bubbles: true }));
                     input.dispatchEvent(new Event('change', { bubbles: true }));
                 }
+
                 Array.from(document.querySelectorAll('button, div, span, svg, i')).forEach(e => {
                     let t = (e.innerText||'').trim(); if (t === '×' || t === 'X') e.click();
                 });
+
+                // If already logged in, skip straight ahead!
+                let isLogged = Array.from(document.querySelectorAll('button, a, div')).some(e => (e.innerText||'').trim() === 'DEPOSIT');
+                if (isLogged) return "ALREADY_LOGGED";
+
                 let p = document.querySelector('input[placeholder*="Phone"], input[type="tel"], input[name*="phone"]');
                 let pass = document.querySelector('input[placeholder*="Password"], input[type="password"]');
+
                 if (p && pass) {
                     setReact(p, '$phone'); setReact(pass, '$commonPassword');
                     setTimeout(() => {
-                        let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => (b.innerText||'').trim() === 'LOGIN' && b.offsetWidth > 100);
+                        let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => (b.innerText||'').trim() === 'LOGIN' && b.offsetWidth > 80);
                         if (btn) btn.click();
-                    }, 1000);
+                    }, 800);
                     return "SUBMITTED";
                 } else {
                     let h = Array.from(document.querySelectorAll('button, a, div')).find(e => (e.innerText||'').trim() === 'LOGIN');
                     if (h) { h.click(); return "OPENED"; }
-                    return "NOT_FOUND";
+                    return "WAIT_MODAL";
                 }
             })();
         """.trimIndent()
 
-        webView.evaluateJavascript(script) { res ->
-            if (res?.contains("OPENED") == true) {
-                safePostDelayed(1500) { runStep1_Login() }
-            } else if (res?.contains("SUBMITTED") == true) {
-                var checks = 0
-                val verify = object : Runnable {
-                    override fun run() {
-                        checks++
-                        val checkJs = "(function(){ return Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT') ? 'LOGGED' : 'WAIT'; })()"
-                        webView.evaluateJavascript(checkJs) { status ->
-                            if (status?.contains("LOGGED") == true || checks >= 12) {
-                                tvStatus.text = "Step 1: Logged in $phone!"
-                                if (isAutoRunning) safePostDelayed(3000) { runStep2_OpenMahara() }
-                            } else {
-                                handler.postDelayed(this, 1000)
+        var modalAttempts = 0
+        val execLogin = object : Runnable {
+            override fun run() {
+                modalAttempts++
+                webView.evaluateJavascript(script) { res ->
+                    if (res?.contains("ALREADY_LOGGED") == true) {
+                        tvStatus.text = "Step 1: Already logged in!"
+                        if (isAutoRunning) safePostDelayed(2500) { runStep2_OpenMahara() }
+                    } else if (res?.contains("SUBMITTED") == true) {
+                        var verifyChecks = 0
+                        val verify = object : Runnable {
+                            override fun run() {
+                                verifyChecks++
+                                val checkJs = "(function(){ return Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT') ? 'LOGGED' : 'WAIT'; })()"
+                                webView.evaluateJavascript(checkJs) { status ->
+                                    if (status?.contains("LOGGED") == true || verifyChecks >= 10) {
+                                        tvStatus.text = "Step 1: Logged in $phone!"
+                                        if (isAutoRunning) safePostDelayed(3000) { runStep2_OpenMahara() }
+                                    } else {
+                                        handler.postDelayed(this, 1000)
+                                    }
+                                }
                             }
                         }
+                        handler.postDelayed(verify, 1500)
+                    } else if (modalAttempts < 12) {
+                        // Automatically retries every 800ms until modal opens & fills
+                        handler.postDelayed(this, 800)
+                    } else {
+                        tvStatus.text = "Step 1: Retrying login..."
+                        safePostDelayed(1000) { runStep1_Login() }
                     }
                 }
-                handler.postDelayed(verify, 1500)
             }
         }
+        execLogin.run()
     }
 
     // ========================================================
@@ -421,10 +438,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
         safePostDelayed(2000) { checkMahara.run() }
-    }
+     }
 
     // ========================================================
-    // 3. BET (Wipes Old Selections First -> All 17 Instant Picks)
+    // 3. BET (Instant 17 Picks Untouched + True Yellow Button Tap)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -441,7 +458,7 @@ class MainActivity : AppCompatActivity() {
 
         val picks13 = safe13.map { if (it == 'D' || it == 'X') 1 else if (it == 'A' || it == '2') 2 else 0 }
         val final17 = if (clean.length >= 17) {
-            picks13 + clean.substring(13, 17).map { if (it == 'D' || it == 'X') 1 else if (it == 'A' || it == '2' ) 2 else 0 }
+            picks13 + clean.substring(13, 17).map { if (it == 'D' || it == 'X') 1 else if (it == 'A' || it == '2') 2 else 0 }
         } else {
             picks13 + List(4) { listOf(0, 1, 2).random() }
         }
@@ -451,7 +468,6 @@ class MainActivity : AppCompatActivity() {
 
         val selectAllJs = """
             (function() {
-                // 1. Clear any leftover picks from previous account!
                 let clearBtn = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').trim() === 'Clear');
                 if (clearBtn) clearBtn.click();
 
@@ -463,7 +479,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (draws.length < 17) return "WAIT_RETRY:" + draws.length;
 
-                // 2. Select all 17 matches cleanly
+                // Instant 17 picks untouched
                 for (let i = 0; i < 17; i++) {
                     let d = draws[i], ch = picks[i];
                     let target = (ch === 0 ? d.previousElementSibling : (ch === 1 ? d : d.nextElementSibling));
@@ -484,7 +500,7 @@ class MainActivity : AppCompatActivity() {
                         handler.postDelayed(this, 1000)
                     } else if (res?.contains("ALL_17_SELECTED") == true) {
                         tvStatus.text = "Step 3: All 17 selected! Opening drawer..."
-                        safePostDelayed(1500) { triggerPlaceBet(accNum, clean) }
+                        safePostDelayed(1500) { triggerPlaceBet(accNum) }
                     } else {
                         tvStatus.text = "Step 3: $res"
                     }
@@ -494,15 +510,27 @@ class MainActivity : AppCompatActivity() {
         execSelect.run()
     }
 
-    private fun triggerPlaceBet(accNum: Int, cleanPattern: String) {
+    // Pinpoint Yellow Place Bet Button Clicker
+    private fun triggerPlaceBet(accNum: Int) {
         val clickBetJs = """
             (function() {
-                let pb = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').includes('Place bet') && e.offsetWidth > 40);
-                if (pb) {
-                    pb.click();
+                // Find all elements whose text strictly starts with "Place bet"
+                let candidates = Array.from(document.querySelectorAll('button, div, [role="button"], a')).filter(el => {
+                    let txt = (el.innerText || '').trim().toLowerCase();
+                    return txt.startsWith('place bet') && el.offsetWidth > 40;
+                });
+
+                if (candidates.length > 0) {
+                    // Innermost element is the actual yellow button, not the outer sheet!
+                    let btn = candidates[candidates.length - 1];
+                    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(name => {
+                        btn.dispatchEvent(new MouseEvent(name, { bubbles: true, cancelable: true, view: window }));
+                    });
+                    btn.click();
+                    if (btn.firstElementChild) btn.firstElementChild.click();
                     return "BET_CLICKED";
                 }
-                return "SEARCHING_PLACE_BET";
+                return "SEARCHING";
             })();
         """.trimIndent()
 
@@ -513,9 +541,7 @@ class MainActivity : AppCompatActivity() {
                 webView.evaluateJavascript(clickBetJs) { res ->
                     if (res?.contains("BET_CLICKED") == true) {
                         tvStatus.text = "SUCCESS: Acc #$accNum placed bet! Finalizing on server..."
-                        if (isAutoRunning) {
-                            safePostDelayed(4500) { runStep4_LogoutAndNext() }
-                        }
+                        if (isAutoRunning) safePostDelayed(4500) { runStep4_LogoutAndNext() }
                     } else if (attempts < 15) {
                         handler.postDelayed(this, 400)
                     } else {
@@ -529,7 +555,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT (Deep Storage Clean & Single Index Advance)
+    // 4. NEXT
     // ========================================================
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session & loading next..."
