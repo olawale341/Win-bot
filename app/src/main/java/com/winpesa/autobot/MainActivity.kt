@@ -91,10 +91,9 @@ class MainActivity : AppCompatActivity() {
                 tvStatus.text = "Loaded: $url"
                 if (url != null && url.contains("winpesa.ng")) {
                     detectDynamicMaharaLink()
-                    // Calm 3.0s breather before next account starts
                     if (isAutoRunning && url.trimEnd('/') == "https://winpesa.ng") {
-                        tvStatus.text = "Steady Pause: Preparing Account #${currentIndex + 1}..."
-                        handler.postDelayed({ runStep1_Login() }, 3000)
+                        tvStatus.text = "Auto-Run: Preparing Account #${currentIndex + 1}..."
+                        handler.postDelayed({ runStep1_Login() }, 2000)
                     }
                 }
             }
@@ -118,7 +117,7 @@ class MainActivity : AppCompatActivity() {
             isAutoRunning = true
             btnAutoRun.text = "⏸️ PAUSE"
             btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_red_dark)
-            tvStatus.text = "▶️ Auto-Run (Steady): Starting Acc #${currentIndex + 1}..."
+            tvStatus.text = "▶️ Auto-Run: Starting Acc #${currentIndex + 1}..."
             runStep1_Login()
         }
     }
@@ -136,6 +135,12 @@ class MainActivity : AppCompatActivity() {
         if (p.startsWith("+234")) p = p.substring(4)
         else if (p.startsWith("234") && p.length > 10) p = p.substring(3)
         else if (p.startsWith("0") && p.length == 11) p = p.substring(1)
+        return p
+    }
+
+    private fun sanitizePattern(raw: String): String {
+        var p = raw.replace(Regex("^[#\\d]+[.:\\-\\s)]+"), "")
+        p = p.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
         return p
     }
 
@@ -291,7 +296,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN (Steady & Human-Like)
+    // 1. LOGIN
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -318,11 +323,10 @@ class MainActivity : AppCompatActivity() {
                 let pass = document.querySelector('input[placeholder*="Password"], input[type="password"]');
                 if (p && pass) {
                     setReact(p, '$phone'); setReact(pass, '$commonPassword');
-                    // Human pause before clicking Login
                     setTimeout(() => {
                         let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => (b.innerText||'').trim() === 'LOGIN' && b.offsetWidth > 100);
                         if (btn) btn.click();
-                    }, 600);
+                    }, 500);
                     return "SUBMITTED";
                 } else {
                     let h = Array.from(document.querySelectorAll('button, a, div')).find(e => (e.innerText||'').trim() === 'LOGIN');
@@ -334,7 +338,7 @@ class MainActivity : AppCompatActivity() {
 
         webView.evaluateJavascript(script) { res ->
             if (res?.contains("OPENED") == true) {
-                handler.postDelayed({ runStep1_Login() }, 1000)
+                handler.postDelayed({ runStep1_Login() }, 800)
             } else if (res?.contains("SUBMITTED") == true) {
                 var checks = 0
                 val verify = object : Runnable {
@@ -344,21 +348,20 @@ class MainActivity : AppCompatActivity() {
                         webView.evaluateJavascript(checkJs) { status ->
                             if (status?.contains("LOGGED") == true || checks >= 8) {
                                 tvStatus.text = "Step 1: Logged in $phone!"
-                                // Steady 2.5s pause before moving to Mahara
-                                if (isAutoRunning) handler.postDelayed({ runStep2_OpenMahara() }, 2500)
+                                if (isAutoRunning) handler.postDelayed({ runStep2_OpenMahara() }, 2000)
                             } else {
-                                handler.postDelayed(this, 700)
+                                handler.postDelayed(this, 600)
                             }
                         }
                     }
                 }
-                handler.postDelayed(verify, 1000)
+                handler.postDelayed(verify, 800)
             }
         }
     }
 
     // ========================================================
-    // 2. MAHARA (Steady Board Loading)
+    // 2. MAHARA
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara..."
@@ -380,7 +383,7 @@ class MainActivity : AppCompatActivity() {
 
                 webView.evaluateJavascript(js) { res ->
                     if (res?.contains("JUMP") == true) {
-                        tvStatus.text = "Step 2: Entering match screen..."
+                        tvStatus.text = "Step 2: Loading match fixtures..."
                         var drawAttempts = 0
                         val checkDraws = object : Runnable {
                             override fun run() {
@@ -389,26 +392,25 @@ class MainActivity : AppCompatActivity() {
                                 webView.evaluateJavascript(countJs) { countStr ->
                                     val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
                                     if (count >= 17) {
-                                        tvStatus.text = "Step 2: All 17 matches ready!"
-                                        // Steady 2.5s pause so you can see the board clearly
-                                        if (isAutoRunning) handler.postDelayed({ runStep3_PickAndBet() }, 2500)
+                                        tvStatus.text = "Step 2: Matches ready!"
+                                        if (isAutoRunning) handler.postDelayed({ runStep3_PickAndBet() }, 1800)
                                     } else if (drawAttempts < 25) {
-                                        handler.postDelayed(this, 700)
+                                        handler.postDelayed(this, 600)
                                     }
                                 }
                             }
                         }
-                        handler.postDelayed(checkDraws, 1500)
+                        handler.postDelayed(checkDraws, 1200)
                     } else if (attempts < 22) {
-                        handler.postDelayed(this, 800)
+                        handler.postDelayed(this, 700)
                     }
                 }
             }
-        }, 1200)
+        }, 1000)
     }
 
     // ========================================================
-    // 3. BET (Smooth 70ms Cadence + Confirmed Place Bet)
+    // 3. BET (Instant 17-Pick + Guaranteed Confirmed Place Bet)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -418,7 +420,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val rawPattern = patternsList[currentIndex % patternsList.size]
-        val clean = rawPattern.replace(Regex("[^1X2HDAMhda]"), "").uppercase()
+        val clean = sanitizePattern(rawPattern)
 
         val safe13 = clean.take(13).toMutableList()
         while (safe13.size < 13) safe13.add(listOf('H', 'D', 'A').random())
@@ -433,68 +435,87 @@ class MainActivity : AppCompatActivity() {
         val jsArray = final17.joinToString(prefix = "[", postfix = "]")
         val accNum = currentIndex + 1
 
-        val betJs = """
+        // Phase 1: INSTANT SELECT ALL 17 MATCHES (No lag, 0ms)
+        val selectAllJs = """
             (function() {
                 const picks = $jsArray;
-
-                                const draws = Array.from(document.querySelectorAll('*')).filter(e => {
+                const draws = Array.from(document.querySelectorAll('*')).filter(e => {
                     let l = (e.innerText||'').trim().split('\n').map(s => s.trim()).filter(Boolean);
                     return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1]));
                 });
 
                 if (draws.length < 17) return "WAIT_RETRY:" + draws.length;
 
-                // Steady, visible 70ms rhythm down the 17 matches
-                picks.forEach((ch, i) => {
-                    setTimeout(() => {
-                        let d = draws[i];
-                        let target = (ch === 0 ? d.previousElementSibling : (ch === 1 ? d : d.nextElementSibling));
-                        if (target) target.click();
-                    }, i * 70);
-                });
+                // Select all 17 instantly
+                for (let i = 0; i < 17; i++) {
+                    let d = draws[i], ch = picks[i];
+                    let target = (ch === 0 ? d.previousElementSibling : (ch === 1 ? d : d.nextElementSibling));
+                    if (target) target.click();
+                }
 
-                // Calm 1.5s pause after match 17 before tapping Place Bet
-                setTimeout(() => {
-                    let attempts = 0;
-                    let timer = setInterval(() => {
-                        attempts++;
-                        let pb = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').includes('Place bet') && e.offsetWidth > 40);
-                        if (pb) {
-                            pb.click();
-                            clearInterval(timer);
-                        } else if (attempts > 18) {
-                            clearInterval(timer);
-                        }
-                    }, 250);
-                }, (17 * 70) + 1500);
-
-                return "SUCCESS: Acc #" + $accNum + " applied " + "$clean".substring(0, Math.min(13, "$clean".length));
+                return "ALL_17_SELECTED";
             })();
         """.trimIndent()
 
         var retries = 0
-        val execBet = object : Runnable {
+        val execSelect = object : Runnable {
             override fun run() {
-                webView.evaluateJavascript(betJs) { res ->
+                webView.evaluateJavascript(selectAllJs) { res ->
                     if (res?.contains("WAIT_RETRY") == true && retries < 10) {
                         retries++
                         tvStatus.text = "Loading matches ($retries/10)..."
-                        handler.postDelayed(this, 700)
+                        handler.postDelayed(this, 600)
+                    } else if (res?.contains("ALL_17_SELECTED") == true) {
+                        tvStatus.text = "Step 3: All 17 selected! Submitting bet..."
+                        // Phase 2: Drawer is open, click Place Bet directly
+                        handler.postDelayed({ triggerPlaceBet(accNum, clean) }, 700)
                     } else {
                         tvStatus.text = "Step 3: $res"
-                        // Steady 4.5s pause to ensure ticket confirmation lands on the server
-                        if (isAutoRunning && res?.contains("SUCCESS") == true) {
-                            handler.postDelayed({ runStep4_LogoutAndNext() }, 4500)
-                        }
                     }
                 }
             }
         }
-        execBet.run()
+        execSelect.run()
+    }
+
+    // Phase 2: Guaranteed Place Bet Click & Full Server Wait
+    private fun triggerPlaceBet(accNum: Int, cleanPattern: String) {
+        val clickBetJs = """
+            (function() {
+                let pb = Array.from(document.querySelectorAll('button, div')).find(e => (e.innerText||'').includes('Place bet') && e.offsetWidth > 40);
+                if (pb) {
+                    pb.click();
+                    return "BET_CLICKED";
+                }
+                return "SEARCHING_PLACE_BET";
+            })();
+        """.trimIndent()
+
+        var attempts = 0
+        val pollPlaceBet = object : Runnable {
+            override fun run() {
+                attempts++
+                webView.evaluateJavascript(clickBetJs) { res ->
+                    if (res?.contains("BET_CLICKED") == true) {
+                        tvStatus.text = "SUCCESS: Acc #$accNum placed bet!"
+                        // Full 3.5-second server confirmation window before logout
+                        if (isAutoRunning) {
+                            handler.postDelayed({ runStep4_LogoutAndNext() }, 3500)
+                        }
+                    } else if (attempts < 12) {
+                        handler.postDelayed(this, 300)
+                    } else {
+                        tvStatus.text = "Step 3: Done."
+                        if (isAutoRunning) handler.postDelayed({ runStep4_LogoutAndNext() }, 2000)
+                    }
+                }
+            }
+        }
+        pollPlaceBet.run()
     }
 
     // ========================================================
-    // 4. NEXT (Deep Storage Wipe & Calm Reload)
+    // 4. NEXT (Deep Storage Clean & Prepare Next Account)
     // ========================================================
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session & loading next..."
