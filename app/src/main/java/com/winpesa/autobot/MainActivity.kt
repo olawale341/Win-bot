@@ -1,6 +1,6 @@
-package com.winpesa.touchbot
+package com.winpesa.autobot
 
-import com.winpesa.touchbot.R
+import com.winpesa.autobot.R
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.net.Uri
@@ -45,12 +45,8 @@ class MainActivity : AppCompatActivity() {
     private var isAutoRunning = false
     private var isStepActive = false
 
-    // Speed multiplier from 0.1x (Extra Slow) to 10.0x (Extreme)
+    // Speed multiplier (0.1x to 10.0x) configured in DATA menu
     private var speedMultiplier = 1.0f
-
-    // Target stop counter (0 = Unlimited / Run all)
-    private var batchStopTarget = 0
-    private var accountsProcessedInBatch = 0
 
     private var filePickTarget = "NUMBERS"
     private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -84,11 +80,8 @@ class MainActivity : AppCompatActivity() {
         btnStep4.setOnClickListener { runStep4_LogoutAndNext() }
     }
 
-    // Dynamic delay scaling: Supports 0.1x (extra slow) to 10x (turbo)
-    private fun scaled(baseMs: Long, minFloorMs: Long = 180L): Long {
-        if (speedMultiplier <= 0f) return baseMs
-        val calculated = (baseMs / speedMultiplier).toLong()
-        return calculated.coerceAtLeast(minFloorMs)
+    private fun getDelay(baseMs: Long): Long {
+        return (baseMs / speedMultiplier).toLong().coerceAtLeast(150L)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -106,8 +99,6 @@ class MainActivity : AppCompatActivity() {
 
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = object : WebViewClient() {
-
-            // Normal image loading restored completely (no blocked images)
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 tvStatus.text = "Loaded: $url"
@@ -116,7 +107,7 @@ class MainActivity : AppCompatActivity() {
                     detectDynamicMaharaLink()
                     if (isAutoRunning && !isStepActive && url.trimEnd('/') == "https://winpesa.ng") {
                         tvStatus.text = "Account #${currentIndex + 1}..."
-                        safeDelay(scaled(800, 250)) { runStep1_Login() }
+                        safeDelay(getDelay(1200)) { runStep1_Login() }
                     }
                 }
             }
@@ -138,7 +129,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun dismissBanners() {
         val js = "(function(){ Array.from(document.querySelectorAll('button,div,span,a')).forEach(e=>{ let t=(e.innerText||'').trim().toLowerCase(); if(t==='got it'||t==='accept'||t==='×'||t==='x') e.click(); }); })()"
-        webView.evaluateJavascript(js, null)
+        webView.evaluateJavascript(js) { }
     }
 
     private fun toggleAutoRun() {
@@ -156,11 +147,9 @@ class MainActivity : AppCompatActivity() {
         } else {
             isAutoRunning = true
             isStepActive = false
-            accountsProcessedInBatch = 0 // Reset batch session count on start
             btnAutoRun.text = "⏸️ PAUSE"
             btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_red_dark)
-            val limitStr = if (batchStopTarget > 0) " (Target: $batchStopTarget)" else ""
-            tvStatus.text = "▶️ Auto-Run [${speedMultiplier}x]$limitStr: Starting #${currentIndex + 1}..."
+            tvStatus.text = "▶️ Auto-Run (${speedMultiplier}x): Acc #${currentIndex + 1}..."
             runStep1_Login()
         }
     }
@@ -187,16 +176,17 @@ class MainActivity : AppCompatActivity() {
         return p
     }
 
+    // ========================================================
+    // ⚙️ DATA MANAGEMENT MENU (Includes Turbo Speed Selector)
+    // ========================================================
     private fun showDataManagementMenu() {
-        val limitDisplay = if (batchStopTarget == 0) "Unlimited" else "$batchStopTarget Accs"
         val options = arrayOf(
-            "⚡ Set Speed: [${speedMultiplier}x]",
-            "🛑 Set Auto-Pause Target: [$limitDisplay]",
             "📱 Numbers: Paste Text",
             "📁 Numbers: Upload .txt File",
             "🎯 Patterns: Paste Text (H-D-A)",
             "📁 Patterns: Upload .txt File",
             "🔑 Set Common Password",
+            "⚡ Set Speed (${speedMultiplier}x)",
             "🔢 Jump to Specific Account #",
             "🔄 Reset Progress to Account #1",
             "🗑️ WIPE ALL (Clear Numbers, Patterns & Reset)"
@@ -205,95 +195,58 @@ class MainActivity : AppCompatActivity() {
             .setTitle("⚙️ Data Manager")
             .setItems(options) { _, which ->
                 when (which) {
-                    0 -> showSpeedDialog()
-                    1 -> showBatchTargetDialog()
-                    2 -> showPasteDialog("NUMBERS")
-                    3 -> { filePickTarget = "NUMBERS"; filePickerLauncher.launch("text/*") }
-                    4 -> showPasteDialog("PATTERNS")
-                    5 -> { filePickTarget = "PATTERNS"; filePickerLauncher.launch("text/*") }
-                    6 -> showPasswordDialog()
-                    7 -> showJumpToAccountDialog()
-                    8 -> { currentIndex = 0; saveData(); updateUI(); Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show() }
-                    9 -> confirmWipeAllData()
+                    0 -> showPasteDialog("NUMBERS")
+                    1 -> { filePickTarget = "NUMBERS"; filePickerLauncher.launch("text/*") }
+                    2 -> showPasteDialog("PATTERNS")
+                    3 -> { filePickTarget = "PATTERNS"; filePickerLauncher.launch("text/*") }
+                    4 -> showPasswordDialog()
+                    5 -> showSpeedSelectionDialog()
+                    6 -> showJumpToAccountDialog()
+                    7 -> { currentIndex = 0; saveData(); updateUI(); Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show() }
+                    8 -> confirmWipeAllData()
                 }
             }
             .setNegativeButton("Close", null).show()
     }
 
-    private fun showSpeedDialog() {
-        val speedLabels = arrayOf(
-            "0.1x (Extra Slow / 10x Slower)",
-            "0.25x (Very Slow / 4x Slower)",
-            "0.5x (Half Speed / Patient)",
-            "0.8x (Gentle / Smooth)",
-            "1.0x (Normal / Standard)",
-            "2.0x (Fast)",
-            "3.0x (Turbo)",
-            "5.0x (Super Turbo)",
-            "7.0x (Ultra Fast)",
-            "10.0x (Extreme)",
-            "✏️ Custom (Type any number)"
-        )
-        val speedValues = floatArrayOf(0.1f, 0.25f, 0.5f, 0.8f, 1.0f, 2.0f, 3.0f, 5.0f, 7.0f, 10.0f)
-
+    private fun showSpeedSelectionDialog() {
+        val presets = arrayOf("0.1x (Extra Slow)", "0.5x (Safe)", "1.0x (Standard)", "2.0x (Fast)", "5.0x (Turbo)", "10.0x (Maximum Speed)", "Custom...")
         AlertDialog.Builder(this)
-            .setTitle("⚡ Select Bot Speed (0.1x - 10x)")
-            .setItems(speedLabels) { _, which ->
-                if (which == speedLabels.size - 1) {
-                    showCustomSpeedInput()
-                } else {
-                    speedMultiplier = speedValues[which]
-                    saveData()
-                    updateUI()
-                    Toast.makeText(this, "Speed set to ${speedMultiplier}x!", Toast.LENGTH_SHORT).show()
+            .setTitle("⚡ Select Speed Multiplier")
+            .setItems(presets) { _, which ->
+                when (which) {
+                    0 -> setSpeed(0.1f)
+                    1 -> setSpeed(0.5f)
+                    2 -> setSpeed(1.0f)
+                    3 -> setSpeed(2.0f)
+                    4 -> setSpeed(5.0f)
+                    5 -> setSpeed(10.0f)
+                    6 -> {
+                        val input = EditText(this)
+                        input.hint = "e.g. 0.8, 3.5, 8.0"
+                        AlertDialog.Builder(this)
+                            .setTitle("Enter Speed (0.1 - 10.0)")
+                            .setView(input)
+                            .setPositiveButton("Set") { _, _ ->
+                                val custom = input.text.toString().trim().toFloatOrNull()
+                                if (custom != null && custom in 0.1f..10.0f) {
+                                    setSpeed(custom)
+                                } else {
+                                    Toast.makeText(this, "Enter a value between 0.1 and 10.0", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                            .setNegativeButton("Cancel", null).show()
+                    }
                 }
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            .setNegativeButton("Back", null).show()
     }
 
-    private fun showCustomSpeedInput() {
-        val input = EditText(this)
-        input.hint = "e.g. 0.3, 1.5, 4.0, 8.5"
-        input.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-        AlertDialog.Builder(this)
-            .setTitle("Type Custom Speed")
-            .setMessage("Enter multiplier between 0.1 and 10.0:")
-            .setView(input)
-            .setPositiveButton("Set") { _, _ ->
-                val entered = input.text.toString().trim().toFloatOrNull()
-                if (entered != null && entered in 0.1f..10.0f) {
-                    speedMultiplier = entered
-                    saveData()
-                    updateUI()
-                    Toast.makeText(this, "Speed set to ${speedMultiplier}x!", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, "Enter a valid number between 0.1 and 10.0", Toast.LENGTH_LONG).show()
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    private fun showBatchTargetDialog() {
-        val input = EditText(this)
-        input.hint = "e.g. 100, 500 (or 0 for unlimited)"
-        input.setText(if (batchStopTarget > 0) batchStopTarget.toString() else "0")
-        input.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        AlertDialog.Builder(this)
-            .setTitle("🛑 Set Auto-Pause Target")
-            .setMessage("How many accounts to run before pausing automatically?\n(Type 0 to run all without stopping)")
-            .setView(input)
-            .setPositiveButton("Save Target") { _, _ ->
-                val target = input.text.toString().trim().toIntOrNull() ?: 0
-                batchStopTarget = target.coerceAtLeast(0)
-                saveData()
-                updateUI()
-                val msg = if (batchStopTarget > 0) "Auto-run will pause after $batchStopTarget accounts!" else "Auto-run target set to Unlimited!"
-                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+    private fun setSpeed(newSpeed: Float) {
+        speedMultiplier = newSpeed
+        saveData()
+        updateUI()
+        Toast.makeText(this, "Speed set to ${speedMultiplier}x", Toast.LENGTH_SHORT).show()
     }
 
     private fun confirmWipeAllData() {
@@ -304,7 +257,7 @@ class MainActivity : AppCompatActivity() {
                 numbersList.clear()
                 patternsList.clear()
                 currentIndex = 0
-                getSharedPreferences("winpesa_touchbot", MODE_PRIVATE).edit().clear().apply()
+                getSharedPreferences("winpesa_bot", MODE_PRIVATE).edit().clear().apply()
                 saveData(); updateUI()
                 tvStatus.text = "All data cleared! Ready for new batch."
             }
@@ -389,34 +342,31 @@ class MainActivity : AppCompatActivity() {
     private fun updateUI() {
         val numCount = numbersList.size
         val patCount = patternsList.size
-        val targetText = if (batchStopTarget > 0) " | Target: $batchStopTarget" else ""
         if (numCount == 0) {
-            tvAccountInfo.text = "Acc: #0/0 [${speedMultiplier}x$targetText] | Tap DATA"
+            tvAccountInfo.text = "Acc: #0/0 | Speed: ${speedMultiplier}x"
         } else {
             val phone = numbersList.getOrElse(currentIndex) { "None" }
             val pattern = if (patCount > 0) patternsList[currentIndex % patCount] else "None"
-            tvAccountInfo.text = "Acc #${currentIndex + 1}/$numCount [${speedMultiplier}x$targetText]: $phone\nPat: $pattern"
+            tvAccountInfo.text = "Acc #${currentIndex + 1}/$numCount (${speedMultiplier}x): $phone\nPat: $pattern"
         }
     }
 
     private fun saveData() {
-        val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
+        val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
         prefs.edit()
             .putString("numbers", numbersList.joinToString("\n"))
             .putString("patterns", patternsList.joinToString("\n"))
             .putString("password", commonPassword)
             .putInt("index", currentIndex)
-            .putFloat("speed_f", speedMultiplier)
-            .putInt("batch_target", batchStopTarget)
+            .putFloat("speed_multiplier", speedMultiplier)
             .apply()
     }
 
     private fun loadPersistedData() {
-        val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
+        val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
         commonPassword = prefs.getString("password", "YourDefaultPassword123") ?: "YourDefaultPassword123"
         currentIndex = prefs.getInt("index", 0)
-        speedMultiplier = prefs.getFloat("speed_f", 1.0f)
-        batchStopTarget = prefs.getInt("batch_target", 0)
+        speedMultiplier = prefs.getFloat("speed_multiplier", 1.0f).coerceIn(0.1f, 10.0f)
         val nums = prefs.getString("numbers", "") ?: ""
         if (nums.isNotEmpty()) { numbersList.clear(); numbersList.addAll(nums.split("\n").map { sanitizePhone(it) }) }
         val pats = prefs.getString("patterns", "") ?: ""
@@ -436,9 +386,8 @@ class MainActivity : AppCompatActivity() {
 
         isStepActive = true
         val phone = numbersList[currentIndex]
-        tvStatus.text = "Step 1: Logging in $phone [${speedMultiplier}x]..."
-
-        val waitReactInput = scaled(350, 160)
+        tvStatus.text = "Step 1: Logging in $phone..."
+        val submitDelay = getDelay(500)
 
         val script = """
             (function() {
@@ -461,7 +410,7 @@ class MainActivity : AppCompatActivity() {
                     setTimeout(() => {
                         let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => (b.innerText||'').trim() === 'LOGIN' && b.offsetWidth > 80);
                         if (btn && p.value.length >= 10) btn.click();
-                    }, $waitReactInput);
+                    }, $submitDelay);
                     return "SUBMITTED";
                 } else {
                     let h = Array.from(document.querySelectorAll('button, a, div')).find(e => (e.innerText||'').trim() === 'LOGIN');
@@ -478,7 +427,7 @@ class MainActivity : AppCompatActivity() {
                 webView.evaluateJavascript(script) { res ->
                     if (res?.contains("ALREADY_LOGGED") == true) {
                         tvStatus.text = "Step 1: Logged in!"
-                        if (isAutoRunning) safeDelay(scaled(700, 250)) { runStep2_OpenMahara() }
+                        if (isAutoRunning) safeDelay(getDelay(800)) { runStep2_OpenMahara() }
                     } else if (res?.contains("SUBMITTED") == true) {
                         var verifyChecks = 0
                         val verify = object : Runnable {
@@ -488,18 +437,18 @@ class MainActivity : AppCompatActivity() {
                                 webView.evaluateJavascript(checkJs) { status ->
                                     if (status?.contains("LOGGED") == true || verifyChecks >= 10) {
                                         tvStatus.text = "Step 1: Logged in $phone!"
-                                        if (isAutoRunning) safeDelay(scaled(800, 300)) { runStep2_OpenMahara() }
+                                        if (isAutoRunning) safeDelay(getDelay(900)) { runStep2_OpenMahara() }
                                     } else {
-                                        handler.postDelayed(this, scaled(350, 150))
+                                        handler.postDelayed(this, 400)
                                     }
                                 }
                             }
                         }
-                        handler.postDelayed(verify, scaled(600, 250))
+                        handler.postDelayed(verify, 700)
                     } else if (modalAttempts < 15) {
-                        handler.postDelayed(this, scaled(350, 150))
+                        handler.postDelayed(this, 400)
                     } else {
-                        safeDelay(scaled(500, 250)) { runStep1_Login() }
+                        safeDelay(600) { runStep1_Login() }
                     }
                 }
             }
@@ -540,25 +489,25 @@ class MainActivity : AppCompatActivity() {
                                     val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
                                     if (count >= 17) {
                                         tvStatus.text = "Step 2: Matches ready!"
-                                        if (isAutoRunning) safeDelay(scaled(600, 250)) { runStep3_PickAndBet() }
+                                        if (isAutoRunning) safeDelay(getDelay(700)) { runStep3_PickAndBet() }
                                     } else if (drawAttempts < 25) {
-                                        handler.postDelayed(this, scaled(350, 150))
+                                        handler.postDelayed(this, 400)
                                     }
                                 }
                             }
                         }
-                        handler.postDelayed(checkDraws, scaled(500, 250))
+                        handler.postDelayed(checkDraws, 600)
                     } else if (attempts < 20) {
-                        handler.postDelayed(this, scaled(350, 150))
+                        handler.postDelayed(this, 400)
                     }
                 }
             }
         }
-        safeDelay(scaled(500, 200)) { checkMahara.run() }
+        safeDelay(600) { checkMahara.run() }
     }
 
     // ========================================================
-    // 3. BET
+    // 3. BET (Instant 17 Picks + Dynamic Safe Place Bet)
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -614,10 +563,10 @@ class MainActivity : AppCompatActivity() {
                     if (res?.contains("WAIT_RETRY") == true && retries < 15) {
                         retries++
                         tvStatus.text = "Loading matches ($retries/15)..."
-                        handler.postDelayed(this, scaled(350, 150))
+                        handler.postDelayed(this, 400)
                     } else if (res?.contains("ALL_17_SELECTED") == true) {
                         tvStatus.text = "Step 3: All 17 picked! Placing bet..."
-                        safeDelay(scaled(450, 200)) { triggerPlaceBet(accNum) }
+                        safeDelay(getDelay(500)) { triggerPlaceBet(accNum) }
                     } else {
                         tvStatus.text = "Step 3: $res"
                     }
@@ -654,15 +603,12 @@ class MainActivity : AppCompatActivity() {
                 webView.evaluateJavascript(clickBetJs) { res ->
                     if (res?.contains("BET_CLICKED") == true || res?.contains("ALREADY_TAPPED") == true) {
                         tvStatus.text = "SUCCESS: Acc #$accNum placed bet!"
-                        // Safe server buffer protects against network latency before session wipe
-                        val safeServerBuffer = (1500L / speedMultiplier).toLong().coerceAtLeast(650L)
-                        if (isAutoRunning) safeDelay(safeServerBuffer) { runStep4_LogoutAndNext() }
+                        if (isAutoRunning) safeDelay(getDelay(1500)) { runStep4_LogoutAndNext() }
                     } else if (attempts < 15) {
-                        handler.postDelayed(this, 180)
+                        handler.postDelayed(this, 200)
                     } else {
                         tvStatus.text = "Step 3: Bet submitted."
-                        val safeServerBuffer = (1200L / speedMultiplier).toLong().coerceAtLeast(650L)
-                        if (isAutoRunning) safeDelay(safeServerBuffer) { runStep4_LogoutAndNext() }
+                        if (isAutoRunning) safeDelay(1000) { runStep4_LogoutAndNext() }
                     }
                 }
             }
@@ -671,7 +617,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT & TARGET CHECK
+    // 4. NEXT (Fast Session Wipe & Immediate Reload)
     // ========================================================
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session..."
@@ -684,16 +630,6 @@ class MainActivity : AppCompatActivity() {
         cookieManager.removeAllCookies {
             cookieManager.flush()
             runOnUiThread {
-                accountsProcessedInBatch++
-
-                // TARGET CHECK: Pause automatically if target limit is reached (e.g. 500)
-                if (batchStopTarget > 0 && accountsProcessedInBatch >= batchStopTarget) {
-                    tvStatus.text = "🎯 TARGET REACHED ($batchStopTarget accounts)! Auto-Run Paused."
-                    Toast.makeText(this, "Batch Target of $batchStopTarget completed! Auto-Run Paused.", Toast.LENGTH_LONG).show()
-                    if (isAutoRunning) toggleAutoRun()
-                    return@runOnUiThread
-                }
-
                 if (numbersList.isNotEmpty()) {
                     if (currentIndex < numbersList.size - 1) {
                         currentIndex++
