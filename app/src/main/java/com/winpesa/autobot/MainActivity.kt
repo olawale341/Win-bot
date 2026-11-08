@@ -45,7 +45,6 @@ class MainActivity : AppCompatActivity() {
     private var isAutoRunning = false
     private var isStepActive = false
 
-    // Speed multiplier (0.1x to 10.0x) configured in DATA menu
     private var speedMultiplier = 1.0f
 
     private var filePickTarget = "NUMBERS"
@@ -92,7 +91,7 @@ class MainActivity : AppCompatActivity() {
         s.databaseEnabled = true
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
-        s.cacheMode = WebSettings.LOAD_DEFAULT // Fast asset caching
+        s.cacheMode = WebSettings.LOAD_DEFAULT
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         s.userAgentString = s.userAgentString.replace("; wv", "")
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
@@ -115,7 +114,7 @@ class MainActivity : AppCompatActivity() {
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true) {
-                    safeDelay(1500) { view?.reload() }
+                    safeDelay(1500L) { view?.reload() }
                 }
             }
         }
@@ -129,7 +128,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun dismissBanners() {
         val js = "(function(){ Array.from(document.querySelectorAll('button,div,span,a')).forEach(e=>{ let t=(e.innerText||'').trim().toLowerCase(); if(t==='got it'||t==='accept'||t==='×'||t==='x') e.click(); }); })()"
-        webView.evaluateJavascript(js) { }
+        webView.evaluateJavascript(js, null)
     }
 
     private fun toggleAutoRun() {
@@ -176,9 +175,6 @@ class MainActivity : AppCompatActivity() {
         return p
     }
 
-    // ========================================================
-    // ⚙️ DATA MANAGEMENT MENU (With Speed Multiplier Setting)
-    // ========================================================
     private fun showDataManagementMenu() {
         val options = arrayOf(
             "📱 Numbers: Paste Text",
@@ -210,29 +206,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showSpeedSelectionDialog() {
-        val presets = arrayOf("0.1x (Extra Slow)", "0.5x (Safe)", "1.0x (Standard)", "2.0x (Fast)", "5.0x (Turbo)", "10.0x (Maximum Speed)", "Custom...")
+        val presets = arrayOf("0.5x (Safe)", "1.0x (Standard)", "2.0x (Fast)", "5.0x (Turbo)", "Custom...")
         AlertDialog.Builder(this)
-            .setTitle("⚡ Select Speed Multiplier")
+            .setTitle("⚡ Select Speed")
             .setItems(presets) { _, which ->
                 when (which) {
-                    0 -> setSpeed(0.1f)
-                    1 -> setSpeed(0.5f)
-                    2 -> setSpeed(1.0f)
-                    3 -> setSpeed(2.0f)
-                    4 -> setSpeed(5.0f)
-                    5 -> setSpeed(10.0f)
-                    6 -> {
+                    0 -> setSpeed(0.5f)
+                    1 -> setSpeed(1.0f)
+                    2 -> setSpeed(2.0f)
+                    3 -> setSpeed(5.0f)
+                    4 -> {
                         val input = EditText(this)
-                        input.hint = "e.g. 0.8, 3.5, 8.0"
+                        input.hint = "e.g. 1.5, 3.0"
                         AlertDialog.Builder(this)
-                            .setTitle("Enter Speed (0.1 - 10.0)")
+                            .setTitle("Enter Speed (0.2 - 5.0)")
                             .setView(input)
                             .setPositiveButton("Set") { _, _ ->
                                 val custom = input.text.toString().trim().toFloatOrNull()
-                                if (custom != null && custom in 0.1f..10.0f) {
+                                if (custom != null && custom in 0.2f..5.0f) {
                                     setSpeed(custom)
-                                } else {
-                                    Toast.makeText(this, "Enter a value between 0.1 and 10.0", Toast.LENGTH_SHORT).show()
                                 }
                             }
                             .setNegativeButton("Cancel", null).show()
@@ -366,7 +358,7 @@ class MainActivity : AppCompatActivity() {
         val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
         commonPassword = prefs.getString("password", "YourDefaultPassword123") ?: "YourDefaultPassword123"
         currentIndex = prefs.getInt("index", 0)
-        speedMultiplier = prefs.getFloat("speed_multiplier", 1.0f).coerceIn(0.1f, 10.0f)
+        speedMultiplier = prefs.getFloat("speed_multiplier", 1.0f).coerceIn(0.2f, 5.0f)
         val nums = prefs.getString("numbers", "") ?: ""
         if (nums.isNotEmpty()) { numbersList.clear(); numbersList.addAll(nums.split("\n").map { sanitizePhone(it) }) }
         val pats = prefs.getString("patterns", "") ?: ""
@@ -374,9 +366,6 @@ class MainActivity : AppCompatActivity() {
         updateUI()
     }
 
-    // ========================================================
-    // 1. LOGIN
-    // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
             tvStatus.text = "Error: Load phone numbers first!"
@@ -387,7 +376,7 @@ class MainActivity : AppCompatActivity() {
         isStepActive = true
         val phone = numbersList[currentIndex]
         tvStatus.text = "Step 1: Logging in $phone..."
-        val submitDelay = getDelay(500)
+        val submitDelay = getDelay(500L)
 
         val script = """
             (function() {
@@ -427,7 +416,7 @@ class MainActivity : AppCompatActivity() {
                 webView.evaluateJavascript(script) { res ->
                     if (res?.contains("ALREADY_LOGGED") == true) {
                         tvStatus.text = "Step 1: Logged in!"
-                        if (isAutoRunning) safeDelay(getDelay(800)) { runStep2_OpenMahara() }
+                        if (isAutoRunning) safeDelay(getDelay(800L)) { runStep2_OpenMahara() }
                     } else if (res?.contains("SUBMITTED") == true) {
                         var verifyChecks = 0
                         val verify = object : Runnable {
@@ -437,18 +426,18 @@ class MainActivity : AppCompatActivity() {
                                 webView.evaluateJavascript(checkJs) { status ->
                                     if (status?.contains("LOGGED") == true || verifyChecks >= 10) {
                                         tvStatus.text = "Step 1: Logged in $phone!"
-                                        if (isAutoRunning) safeDelay(getDelay(900)) { runStep2_OpenMahara() }
+                                        if (isAutoRunning) safeDelay(getDelay(900L)) { runStep2_OpenMahara() }
                                     } else {
-                                        handler.postDelayed(this, 400)
+                                        handler.postDelayed(this, 400L)
                                     }
                                 }
                             }
                         }
-      handler.postDelayed(verify, 700)
+                        handler.postDelayed(verify, 700L)
                     } else if (modalAttempts < 15) {
-                        handler.postDelayed(this, 400)
+                        handler.postDelayed(this, 400L)
                     } else {
-                        safeDelay(600) { runStep1_Login() }
+                        safeDelay(600L) { runStep1_Login() }
                     }
                 }
             }
@@ -456,9 +445,6 @@ class MainActivity : AppCompatActivity() {
         execLogin.run()
     }
 
-    // ========================================================
-    // 2. MAHARA
-    // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara..."
         webView.loadUrl(activeMaharaUrl)
@@ -489,26 +475,23 @@ class MainActivity : AppCompatActivity() {
                                     val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
                                     if (count >= 17) {
                                         tvStatus.text = "Step 2: Matches ready!"
-                                        if (isAutoRunning) safeDelay(getDelay(700)) { runStep3_PickAndBet() }
+                                        if (isAutoRunning) safeDelay(getDelay(700L)) { runStep3_PickAndBet() }
                                     } else if (drawAttempts < 25) {
-                                        handler.postDelayed(this, 400)
+                                        handler.postDelayed(this, 400L)
                                     }
                                 }
                             }
                         }
-                        handler.postDelayed(checkDraws, 600)
+                        handler.postDelayed(checkDraws, 600L)
                     } else if (attempts < 20) {
-                        handler.postDelayed(this, 400)
+                        handler.postDelayed(this, 400L)
                     }
                 }
             }
         }
-        safeDelay(600) { checkMahara.run() }
+        safeDelay(600L) { checkMahara.run() }
     }
 
-    // ========================================================
-    // 3. BET
-    // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
             tvStatus.text = "Error: Load patterns first via ⚙️ DATA"
@@ -563,10 +546,10 @@ class MainActivity : AppCompatActivity() {
                     if (res?.contains("WAIT_RETRY") == true && retries < 15) {
                         retries++
                         tvStatus.text = "Loading matches ($retries/15)..."
-                        handler.postDelayed(this, 400)
+                        handler.postDelayed(this, 400L)
                     } else if (res?.contains("ALL_17_SELECTED") == true) {
                         tvStatus.text = "Step 3: All 17 picked! Placing bet..."
-                        safeDelay(getDelay(500)) { triggerPlaceBet(accNum) }
+                        safeDelay(getDelay(500L)) { triggerPlaceBet(accNum) }
                     } else {
                         tvStatus.text = "Step 3: $res"
                     }
@@ -603,12 +586,12 @@ class MainActivity : AppCompatActivity() {
                 webView.evaluateJavascript(clickBetJs) { res ->
                     if (res?.contains("BET_CLICKED") == true || res?.contains("ALREADY_TAPPED") == true) {
                         tvStatus.text = "SUCCESS: Acc #$accNum placed bet!"
-                        if (isAutoRunning) safeDelay(getDelay(1500)) { runStep4_LogoutAndNext() }
+                        if (isAutoRunning) safeDelay(getDelay(1500L)) { runStep4_LogoutAndNext() }
                     } else if (attempts < 15) {
-                        handler.postDelayed(this, 200)
+                        handler.postDelayed(this, 200L)
                     } else {
                         tvStatus.text = "Step 3: Bet submitted."
-                        if (isAutoRunning) safeDelay(1000) { runStep4_LogoutAndNext() }
+                        if (isAutoRunning) safeDelay(1000L) { runStep4_LogoutAndNext() }
                     }
                 }
             }
@@ -616,9 +599,6 @@ class MainActivity : AppCompatActivity() {
         pollPlaceBet.run()
     }
 
-    // ========================================================
-    // 4. NEXT
-    // ========================================================
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session..."
         isStepActive = false
