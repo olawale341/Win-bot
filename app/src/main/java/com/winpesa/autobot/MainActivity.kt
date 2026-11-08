@@ -92,7 +92,7 @@ class MainActivity : AppCompatActivity() {
         s.databaseEnabled = true
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
-        s.cacheMode = WebSettings.LOAD_DEFAULT
+        s.cacheMode = WebSettings.LOAD_DEFAULT // Fast asset caching
         s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         s.userAgentString = s.userAgentString.replace("; wv", "")
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
@@ -177,7 +177,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // ⚙️ DATA MANAGEMENT MENU (Includes Turbo Speed Selector)
+    // ⚙️ DATA MANAGEMENT MENU (With Speed Multiplier Setting)
     // ========================================================
     private fun showDataManagementMenu() {
         val options = arrayOf(
@@ -444,7 +444,7 @@ class MainActivity : AppCompatActivity() {
                                 }
                             }
                         }
-                        handler.postDelayed(verify, 700)
+      handler.postDelayed(verify, 700)
                     } else if (modalAttempts < 15) {
                         handler.postDelayed(this, 400)
                     } else {
@@ -507,7 +507,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 3. BET (Instant 17 Picks + Dynamic Safe Place Bet)
+    // 3. BET
     // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
@@ -617,7 +617,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT (Fast Session Wipe & Immediate Reload)
+    // 4. NEXT
     // ========================================================
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session..."
