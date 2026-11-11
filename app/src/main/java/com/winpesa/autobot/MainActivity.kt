@@ -40,11 +40,12 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val numbersList = mutableListOf<String>()
     private val patternsList = mutableListOf<String>()
+    private val skippedAccountsList = mutableListOf<String>()
+
     private var currentIndex = 0
     private var commonPassword = "YourDefaultPassword123"
     private var isAutoRunning = false
     private var isStepActive = false
-
     private var speedMultiplier = 1.0f
 
     private var filePickTarget = "NUMBERS"
@@ -106,7 +107,7 @@ class MainActivity : AppCompatActivity() {
                     detectDynamicMaharaLink()
                     if (isAutoRunning && !isStepActive && url.trimEnd('/') == "https://winpesa.ng") {
                         tvStatus.text = "Account #${currentIndex + 1}..."
-                        safeDelay(getDelay(1200)) { runStep1_Login() }
+                        safeDelay(getDelay(1200L)) { runStep1_Login() }
                     }
                 }
             }
@@ -175,6 +176,9 @@ class MainActivity : AppCompatActivity() {
         return p
     }
 
+    // ========================================================
+    // ⚙️ DATA MANAGEMENT MENU (With Skipped Accounts Viewer)
+    // ========================================================
     private fun showDataManagementMenu() {
         val options = arrayOf(
             "📱 Numbers: Paste Text",
@@ -183,6 +187,7 @@ class MainActivity : AppCompatActivity() {
             "📁 Patterns: Upload .txt File",
             "🔑 Set Common Password",
             "⚡ Set Speed (${speedMultiplier}x)",
+            "⚠️ Skipped Accounts (${skippedAccountsList.size})",
             "🔢 Jump to Specific Account #",
             "🔄 Reset Progress to Account #1",
             "🗑️ WIPE ALL (Clear Numbers, Patterns & Reset)"
@@ -197,12 +202,44 @@ class MainActivity : AppCompatActivity() {
                     3 -> { filePickTarget = "PATTERNS"; filePickerLauncher.launch("text/*") }
                     4 -> showPasswordDialog()
                     5 -> showSpeedSelectionDialog()
-                    6 -> showJumpToAccountDialog()
-                    7 -> { currentIndex = 0; saveData(); updateUI(); Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show() }
-                    8 -> confirmWipeAllData()
+                    6 -> showSkippedAccountsDialog()
+                    7 -> showJumpToAccountDialog()
+                    8 -> { currentIndex = 0; saveData(); updateUI(); Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show() }
+                    9 -> confirmWipeAllData()
                 }
             }
             .setNegativeButton("Close", null).show()
+    }
+
+    private fun showSkippedAccountsDialog() {
+        val count = skippedAccountsList.size
+        val msg = if (count == 0) {
+            "No accounts have been skipped! All accounts have succeeded."
+        } else {
+            "Total Failed: $count\n\n" + skippedAccountsList.joinToString("\n")
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("⚠️ Skipped Accounts ($count)")
+            .setMessage(msg)
+            .setPositiveButton("OK", null)
+            .setNeutralButton("Clear List") { _, _ ->
+                skippedAccountsList.clear()
+                saveData()
+                Toast.makeText(this, "Skipped list cleared!", Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private fun logSkippedAccount(phone: String, reason: String) {
+        val entry = "Acc #${currentIndex + 1}: $phone ($reason)"
+        skippedAccountsList.add(entry)
+        saveData()
+        tvStatus.text = "⚠️ Skipped: $entry"
+        // Immediately advance to next account without freezing
+        if (isAutoRunning) {
+            safeDelay(1200L) { runStep4_LogoutAndNext() }
+        }
     }
 
     private fun showSpeedSelectionDialog() {
@@ -223,9 +260,7 @@ class MainActivity : AppCompatActivity() {
                             .setView(input)
                             .setPositiveButton("Set") { _, _ ->
                                 val custom = input.text.toString().trim().toFloatOrNull()
-                                if (custom != null && custom in 0.2f..5.0f) {
-                                    setSpeed(custom)
-                                }
+                                if (custom != null && custom in 0.2f..5.0f) setSpeed(custom)
                             }
                             .setNegativeButton("Cancel", null).show()
                     }
@@ -244,10 +279,11 @@ class MainActivity : AppCompatActivity() {
     private fun confirmWipeAllData() {
         AlertDialog.Builder(this)
             .setTitle("🗑️ Wipe All Data?")
-            .setMessage("Delete all saved numbers, patterns and reset progress to #0?")
+            .setMessage("Delete all saved numbers, patterns, skipped accounts and reset progress?")
             .setPositiveButton("Yes, Wipe All") { _, _ ->
                 numbersList.clear()
                 patternsList.clear()
+                skippedAccountsList.clear()
                 currentIndex = 0
                 getSharedPreferences("winpesa_bot", MODE_PRIVATE).edit().clear().apply()
                 saveData(); updateUI()
@@ -348,6 +384,7 @@ class MainActivity : AppCompatActivity() {
         prefs.edit()
             .putString("numbers", numbersList.joinToString("\n"))
             .putString("patterns", patternsList.joinToString("\n"))
+            .putString("skipped", skippedAccountsList.joinToString("\n"))
             .putString("password", commonPassword)
             .putInt("index", currentIndex)
             .putFloat("speed_multiplier", speedMultiplier)
@@ -359,13 +396,22 @@ class MainActivity : AppCompatActivity() {
         commonPassword = prefs.getString("password", "YourDefaultPassword123") ?: "YourDefaultPassword123"
         currentIndex = prefs.getInt("index", 0)
         speedMultiplier = prefs.getFloat("speed_multiplier", 1.0f).coerceIn(0.2f, 5.0f)
+
         val nums = prefs.getString("numbers", "") ?: ""
         if (nums.isNotEmpty()) { numbersList.clear(); numbersList.addAll(nums.split("\n").map { sanitizePhone(it) }) }
+
         val pats = prefs.getString("patterns", "") ?: ""
         if (pats.isNotEmpty()) { patternsList.clear(); patternsList.addAll(pats.split("\n")) }
+
+        val skips = prefs.getString("skipped", "") ?: ""
+        if (skips.isNotEmpty()) { skippedAccountsList.clear(); skippedAccountsList.addAll(skips.split("\n")) }
+
         updateUI()
     }
 
+    // ========================================================
+    // 1. LOGIN (With Smart Error Detection & Auto-Skip)
+    // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
             tvStatus.text = "Error: Load phone numbers first!"
@@ -397,7 +443,10 @@ class MainActivity : AppCompatActivity() {
                 if (p && pass) {
                     setReact(p, '$phone'); setReact(pass, '$commonPassword');
                     setTimeout(() => {
-                        let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => (b.innerText||'').trim() === 'LOGIN' && b.offsetWidth > 80);
+                        let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => {
+                            let t = (b.innerText||'').trim();
+                            return t === 'LOGIN' && b.offsetWidth > 80;
+                        });
                         if (btn && p.value.length >= 10) btn.click();
                     }, $submitDelay);
                     return "SUBMITTED";
@@ -422,13 +471,36 @@ class MainActivity : AppCompatActivity() {
                         val verify = object : Runnable {
                             override fun run() {
                                 verifyChecks++
-                                val checkJs = "(function(){ return Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT') ? 'LOGGED' : 'WAIT'; })()"
+                                val checkJs = """
+                                    (function() {
+                                        let text = (document.body.innerText || '').toLowerCase();
+                                        let logged = Array.from(document.querySelectorAll('button,a,div')).some(e => (e.innerText||'').trim() === 'DEPOSIT');
+                                        if (logged) return 'LOGGED';
+
+                                        // Error Checks
+                                        if (text.includes('incorrect password') || text.includes('wrong password') || text.includes('invalid password')) return 'ERR_PASSWORD';
+                                        if (text.includes('not register') || text.includes('user not found') || text.includes('not exist') || text.includes('invalid account')) return 'ERR_UNREGISTERED';
+                                        if (text.includes('phone must be 10')) return 'REFILL_NEEDED';
+
+                                        return 'WAIT';
+                                    })()
+                                """.trimIndent()
+
                                 webView.evaluateJavascript(checkJs) { status ->
-                                    if (status?.contains("LOGGED") == true || verifyChecks >= 10) {
+                                    if (status?.contains("LOGGED") == true) {
                                         tvStatus.text = "Step 1: Logged in $phone!"
                                         if (isAutoRunning) safeDelay(getDelay(900L)) { runStep2_OpenMahara() }
+                                    } else if (status?.contains("ERR_PASSWORD") == true) {
+                                        logSkippedAccount(phone, "Incorrect Password")
+                                    } else if (status?.contains("ERR_UNREGISTERED") == true) {
+                                        logSkippedAccount(phone, "Number Not Registered")
+                                    } else if (status?.contains("REFILL_NEEDED") == true) {
+                                        handler.postDelayed({ runStep1_Login() }, 500L)
+                                    } else if (verifyChecks >= 12) {
+                                        // Timeout fallback
+                                        logSkippedAccount(phone, "Login Timeout")
                                     } else {
-                                        handler.postDelayed(this, 400L)
+                                        handler.postDelayed(this, 500L)
                                     }
                                 }
                             }
@@ -445,6 +517,9 @@ class MainActivity : AppCompatActivity() {
         execLogin.run()
     }
 
+    // ========================================================
+    // 2. MAHARA
+    // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara..."
         webView.loadUrl(activeMaharaUrl)
@@ -492,6 +567,9 @@ class MainActivity : AppCompatActivity() {
         safeDelay(600L) { checkMahara.run() }
     }
 
+    // ========================================================
+    // 3. BET
+    // ========================================================
     private fun runStep3_PickAndBet() {
         if (patternsList.isEmpty()) {
             tvStatus.text = "Error: Load patterns first via ⚙️ DATA"
@@ -599,6 +677,9 @@ class MainActivity : AppCompatActivity() {
         pollPlaceBet.run()
     }
 
+    // ========================================================
+    // 4. NEXT
+    // ========================================================
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session..."
         isStepActive = false
