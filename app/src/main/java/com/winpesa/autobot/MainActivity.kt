@@ -550,22 +550,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA (The "Practice Neighbor" Precision Anchor)
+    // 2. MAHARA (With 4-Second "One-Tap Cooldown" Watcher)
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Entering Mahara..."
         webView.loadUrl(activeMaharaUrl)
 
+        var playTapCooldown = false
+
         val checkMahara = object : Runnable {
             override fun run() {
                 val js = """
                     (function() {
-                        // 1. If game iframe already exists, jump immediately
+                        // 1. If game iframe already exists, jump into it immediately!
                         let iframes = Array.from(document.querySelectorAll('iframe'));
                         let aggr = iframes.find(f => f.src && (f.src.includes('aggrhub.com') || f.src.includes('soccer13') || f.src.includes('session=')));
                         if (aggr) { 
-                            window.location.href = aggr.src; 
-                            return "JUMP"; 
+                            return "JUMP:" + aggr.src; 
                         }
 
                         // 2. Clear cookie banners
@@ -576,62 +577,106 @@ class MainActivity : AppCompatActivity() {
                             }
                         });
 
-                        // 3. THE PRACTICE NEIGHBOR ANCHOR:
-                        // Find the unique "PRACTICE" button on the modal
+                        // 3. Find the yellow PLAY button via PRACTICE sibling anchor
                         let practiceBtn = Array.from(document.querySelectorAll('*')).find(el => {
                             return (el.innerText || '').trim().toUpperCase() === 'PRACTICE';
                         });
 
+                        let playBtn = null;
                         if (practiceBtn && practiceBtn.parentElement) {
-                            // Find the yellow PLAY button sitting in the EXACT same card container!
-                            let container = practiceBtn.parentElement;
-                            let playBtn = Array.from(container.querySelectorAll('*')).find(el => {
+                            playBtn = Array.from(practiceBtn.parentElement.querySelectorAll('*')).find(el => {
                                 let t = (el.innerText || '').trim().toUpperCase();
                                 return t === 'PLAY';
                             });
-
-                            if (playBtn) {
-                                try { playBtn.click(); } catch(e) {}
-                                let p = playBtn.closest('button, [role="button"], a');
-                                if (p) { try { p.click(); } catch(e) {} }
-                                return "CLICKED_MODAL_PLAY";
-                            }
                         }
 
-                        return "WAIT_MODAL";
+                        // Fallback: search for direct PLAY button
+                        if (!playBtn) {
+                            playBtn = Array.from(document.querySelectorAll('button, [role="button"], a, div')).find(el => {
+                                let t = (el.innerText || '').trim().toUpperCase();
+                                return t === 'PLAY' && el.offsetWidth > 40 && el.offsetHeight > 15;
+                            });
+                        }
+
+                        if (playBtn) {
+                            return "PLAY_READY";
+                        }
+
+                        return "WAITING_MODAL";
                     })();
                 """.trimIndent()
 
                 webView.evaluateJavascript(js) { res ->
-                    if (res?.contains("JUMP") == true) {
+                    if (res?.contains("JUMP:") == true) {
+                        val gameUrl = res.replace("\"", "").substringAfter("JUMP:")
                         tvStatus.text = "Step 2: Entering match board..."
-                        var drawAttempts = 0
-                        val checkDraws = object : Runnable {
-                            override fun run() {
-                                drawAttempts++
-                                val countJs = "(function(){ return Array.from(document.querySelectorAll('*')).filter(e => { let l = (e.innerText||'').trim().split('\\n').map(s=>s.trim()).filter(Boolean); return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1])); }).length; })()"
-                                webView.evaluateJavascript(countJs) { countStr ->
-                                    val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
-                                    if (count >= 17) {
-                                        tvStatus.text = "Step 2: Matches ready!"
-                                        if (isAutoRunning) safeDelay(getDelay(700L)) { runStep3_PickAndBet() }
-                                    } else if (drawAttempts < 35) {
-                                        handler.postDelayed(this, 500L)
-                                    } else {
-                                        runStep2_OpenMahara()
+                        webView.loadUrl(gameUrl)
+                        waitFor17Fixtures()
+                    } else if (res?.contains("PLAY_READY") == true) {
+                        if (!playTapCooldown) {
+                            // Taps PLAY ONCE like a calm human finger
+                            playTapCooldown = true
+                            tvStatus.text = "Step 2: Tapped PLAY! Waiting 4s for game to open..."
+
+                            val tapJs = """
+                                (function() {
+                                    let practiceBtn = Array.from(document.querySelectorAll('*')).find(el => (el.innerText || '').trim().toUpperCase() === 'PRACTICE');
+                                    let btn = null;
+                                    if (practiceBtn && practiceBtn.parentElement) {
+                                        btn = Array.from(practiceBtn.parentElement.querySelectorAll('*')).find(el => (el.innerText || '').trim().toUpperCase() === 'PLAY');
                                     }
-                                }
-                            }
+                                    if (!btn) {
+                                        btn = Array.from(document.querySelectorAll('button, [role="button"], a, div')).find(el => (el.innerText || '').trim().toUpperCase() === 'PLAY' && el.offsetWidth > 40);
+                                    }
+                                    if (btn) {
+                                        try { btn.click(); } catch(e) {}
+                                        let p = btn.closest('button, [role="button"], a');
+                                        if (p) { try { p.click(); } catch(e) {} }
+                                    }
+                                })();
+                            """.trimIndent()
+                            webView.evaluateJavascript(tapJs, null)
+
+                            // Cooldown: Refuse to spam tap for 4 full seconds to let server launch
+                            handler.postDelayed({
+                                playTapCooldown = false
+                            }, 4000L)
                         }
-                        handler.postDelayed(checkDraws, 600L)
+
+                        // Poll for the game iframe every 600ms
+                        handler.postDelayed(this, 600L)
                     } else {
-                        // Poll smoothly every 500ms until the modal card is clicked & enters
-                        handler.postDelayed(this, 500L)
+                        // Modal opening
+                        handler.postDelayed(this, 600L)
                     }
                 }
             }
         }
-        safeDelay(600L) { checkMahara.run() }
+        safeDelay(1000L) { checkMahara.run() }
+    }
+
+    private fun waitFor17Fixtures() {
+        var drawAttempts = 0
+        val checkDraws = object : Runnable {
+            override fun run() {
+                drawAttempts++
+                val countJs = "(function(){ return Array.from(document.querySelectorAll('*')).filter(e => { let l = (e.innerText||'').trim().split('\\n').map(s=>s.trim()).filter(Boolean); return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1])); }).length; })()"
+                webView.evaluateJavascript(countJs) { countStr ->
+                    val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
+                    if (count >= 17) {
+                        tvStatus.text = "Step 2: All 17 matches confirmed! Selecting picks..."
+                        if (isAutoRunning) safeDelay(getDelay(800L)) { runStep3_PickAndBet() }
+                    } else if (drawAttempts < 40) {
+                        tvStatus.text = "Loading matches ($count/17)..."
+                        handler.postDelayed(this, 600L)
+                    } else {
+                        // Re-enter if network hung
+                        runStep2_OpenMahara()
+                    }
+                }
+            }
+        }
+        handler.postDelayed(checkDraws, 1200L)
     }
 
     // ========================================================
