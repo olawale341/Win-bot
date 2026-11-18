@@ -550,27 +550,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA (Single-Tap Precision + Never Spam Clicks)
+    // 2. MAHARA (The "Practice Neighbor" Precision Anchor)
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Entering Mahara..."
         webView.loadUrl(activeMaharaUrl)
 
-        var waitAfterClick = 0
         val checkMahara = object : Runnable {
             override fun run() {
                 val js = """
                     (function() {
-                        // 1. If game iframe is detected, jump into it immediately!
+                        // 1. If game iframe already exists, jump immediately
                         let iframes = Array.from(document.querySelectorAll('iframe'));
                         let aggr = iframes.find(f => f.src && (f.src.includes('aggrhub.com') || f.src.includes('soccer13') || f.src.includes('session=')));
                         if (aggr) { 
-                            window._playClickedOnce = false;
                             window.location.href = aggr.src; 
                             return "JUMP"; 
                         }
 
-                        // 2. Dismiss cookie banners
+                        // 2. Clear cookie banners
                         Array.from(document.querySelectorAll('button, div, span, a')).forEach(e => {
                             let t = (e.innerText||'').trim().toLowerCase();
                             if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') {
@@ -578,24 +576,26 @@ class MainActivity : AppCompatActivity() {
                             }
                         });
 
-                        // 3. Find yellow PLAY button
-                        let allPlay = Array.from(document.querySelectorAll('button, [role="button"], div, a')).filter(el => {
-                            let t = (el.innerText || '').trim().toUpperCase();
-                            return t === 'PLAY' && el.offsetWidth > 40 && el.offsetHeight > 15;
+                        // 3. THE PRACTICE NEIGHBOR ANCHOR:
+                        // Find the unique "PRACTICE" button on the modal
+                        let practiceBtn = Array.from(document.querySelectorAll('*')).find(el => {
+                            return (el.innerText || '').trim().toUpperCase() === 'PRACTICE';
                         });
 
-                        if (allPlay.length > 0) {
-                            let btn = allPlay[allPlay.length - 1];
+                        if (practiceBtn && practiceBtn.parentElement) {
+                            // Find the yellow PLAY button sitting in the EXACT same card container!
+                            let container = practiceBtn.parentElement;
+                            let playBtn = Array.from(container.querySelectorAll('*')).find(el => {
+                                let t = (el.innerText || '').trim().toUpperCase();
+                                return t === 'PLAY';
+                            });
 
-                            // CLICK EXACTLY ONCE like a human finger! Never spam click!
-                            if (!window._playClickedOnce) {
-                                window._playClickedOnce = true;
-                                try { btn.click(); } catch(e) {}
-                                let p = btn.closest('button, a, div[role="button"]');
+                            if (playBtn) {
+                                try { playBtn.click(); } catch(e) {}
+                                let p = playBtn.closest('button, [role="button"], a');
                                 if (p) { try { p.click(); } catch(e) {} }
-                                return "CLICKED_PLAY_ONCE";
+                                return "CLICKED_MODAL_PLAY";
                             }
-                            return "WAITING_GAME_LOAD";
                         }
 
                         return "WAIT_MODAL";
@@ -618,7 +618,6 @@ class MainActivity : AppCompatActivity() {
                                     } else if (drawAttempts < 35) {
                                         handler.postDelayed(this, 500L)
                                     } else {
-                                        // Reload if network hung
                                         runStep2_OpenMahara()
                                     }
                                 }
@@ -626,20 +625,7 @@ class MainActivity : AppCompatActivity() {
                         }
                         handler.postDelayed(checkDraws, 600L)
                     } else {
-                        if (res?.contains("CLICKED_PLAY_ONCE") == true) {
-                            tvStatus.text = "Step 2: PLAY tapped! Generating game session..."
-                        }
-
-                        // If waiting for more than 5 seconds after click, reset lock to allow a second tap
-                        if (res?.contains("WAITING_GAME_LOAD") == true) {
-                            waitAfterClick++
-                            if (waitAfterClick >= 10) {
-                                waitAfterClick = 0
-                                webView.evaluateJavascript("window._playClickedOnce = false;", null)
-                            }
-                        }
-
-                        // Poll every 500ms
+                        // Poll smoothly every 500ms until the modal card is clicked & enters
                         handler.postDelayed(this, 500L)
                     }
                 }
