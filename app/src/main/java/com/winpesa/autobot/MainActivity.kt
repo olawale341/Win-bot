@@ -7,6 +7,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -47,8 +49,10 @@ class MainActivity : AppCompatActivity() {
     private var isAutoRunning = false
     private var isStepActive = false
     private var speedMultiplier = 1.0f
-
     private var blockImages = false
+
+    // Dedicated watchdog runnable that guarantees auto-skipping if Mahara stalls
+    private var maharaWatchdog: Runnable? = null
 
     private var filePickTarget = "NUMBERS"
     private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -86,6 +90,19 @@ class MainActivity : AppCompatActivity() {
         return (baseMs / speedMultiplier).toLong().coerceAtLeast(150L)
     }
 
+    private fun simulateHardwareTouch(x: Float, y: Float) {
+        val now = SystemClock.uptimeMillis()
+        val density = resources.displayMetrics.density
+        val px = x * density
+        val py = y * density
+        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, px, py, 0)
+        val up = MotionEvent.obtain(now, now + 80, MotionEvent.ACTION_UP, px, py, 0)
+        webView.dispatchTouchEvent(down)
+        webView.dispatchTouchEvent(up)
+        down.recycle()
+        up.recycle()
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         val s = webView.settings
@@ -111,10 +128,6 @@ class MainActivity : AppCompatActivity() {
                 dismissBanners()
                 if (url != null && url.contains("winpesa.ng")) {
                     detectDynamicMaharaLink()
-                    if (isAutoRunning && !isStepActive && url.trimEnd('/') == "https://winpesa.ng") {
-                        tvStatus.text = "Account #${currentIndex + 1}..."
-                        safeDelay(getDelay(1200L)) { runStep1_Login() }
-                    }
                 }
             }
 
@@ -129,7 +142,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun safeDelay(delayMs: Long, action: () -> Unit) {
-        handler.removeCallbacksAndMessages(null)
         handler.postDelayed({ action() }, delayMs)
     }
 
@@ -155,6 +167,7 @@ class MainActivity : AppCompatActivity() {
         if (isAutoRunning) {
             isAutoRunning = false
             isStepActive = false
+            maharaWatchdog?.let { handler.removeCallbacks(it) }
             handler.removeCallbacksAndMessages(null)
             btnAutoRun.text = "▶️ AUTO"
             btnAutoRun.backgroundTintList = getColorStateList(android.R.color.holo_green_dark)
@@ -265,7 +278,7 @@ class MainActivity : AppCompatActivity() {
         saveData()
         tvStatus.text = "⚠️ Skipped: $entry"
         if (isAutoRunning) {
-            safeDelay(1000L) { runStep4_LogoutAndNext() }
+            safeDelay(800L) { runStep4_LogoutAndNext() }
         }
     }
 
@@ -550,17 +563,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA (Direct Play Tap + Auto-Skip if Stuck)
+    // 2. MAHARA (With Unstoppable 6.5s Auto-Skip Watchdog)
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Entering Mahara..."
         webView.loadUrl(activeMaharaUrl)
 
-        var attempts = 0
+        // CANCEL any previous watchdog
+        maharaWatchdog?.let { handler.removeCallbacks(it) }
+
+        // Start 6.5s Watchdog: If stuck on Mahara, auto-skip to NEXT account!
+        maharaWatchdog = Runnable {
+            if (isAutoRunning) {
+                val phone = numbersList.getOrElse(currentIndex) { "Account" }
+                tvStatus.text = "⚠️ Mahara stuck. Auto-skipping $phone..."
+                logSkippedAccount(phone, "Stuck on Mahara Launch")
+            }
+        }
+        handler.postDelayed(maharaWatchdog!!, 6500L)
+
         val checkMahara = object : Runnable {
             override fun run() {
                 if (!isStepActive && !isAutoRunning) return
-                attempts++
 
                 val js = """
                     (function() {
@@ -568,6 +592,7 @@ class MainActivity : AppCompatActivity() {
                         let aggr = iframes.find(f => f.src && (f.src.includes('aggrhub.com') || f.src.includes('soccer13') || f.src.includes('session=')));
                         if (aggr) return "JUMP:" + aggr.src;
 
+                        // Click cookie banners
                         Array.from(document.querySelectorAll('button, div, span, a')).forEach(e => {
                             let t = (e.innerText||'').trim().toLowerCase();
                             if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') {
@@ -575,39 +600,57 @@ class MainActivity : AppCompatActivity() {
                             }
                         });
 
-                        // Direct button search
+                        // Find PLAY button on modal
                         let playBtn = Array.from(document.querySelectorAll('button, [role="button"], a, div')).find(el => {
                             let t = (el.innerText || '').trim().toUpperCase();
                             return t === 'PLAY' && el.offsetWidth > 40;
                         });
 
                         if (playBtn) {
+                            let rect = playBtn.getBoundingClientRect();
+                            // Fire touch events
+                            try {
+                                let touch = new Touch({ identifier: Date.now(), target: playBtn, clientX: rect.left+rect.width/2, clientY: rect.top+rect.height/2 });
+                                playBtn.dispatchEvent(new TouchEvent('touchstart', { touches: [touch], targetTouches: [touch], changedTouches: [touch], bubbles: true }));
+                                playBtn.dispatchEvent(new TouchEvent('touchend', { touches: [], targetTouches: [], changedTouches: [touch], bubbles: true }));
+                            } catch(e) {}
                             try { playBtn.click(); } catch(e) {}
                             let p = playBtn.closest('button, [role="button"], a');
                             if (p) { try { p.click(); } catch(e) {} }
-                            return "PLAY_CLICKED";
+
+                            return "TOUCH:" + (rect.left + rect.width/2) + ":" + (rect.top + rect.height/2);
                         }
+
                         return "WAIT_MODAL";
                     })();
                 """.trimIndent()
 
                 webView.evaluateJavascript(js) { res ->
                     if (res?.contains("JUMP:") == true) {
+                        // SUCCESS: Cancel Watchdog immediately!
+                        maharaWatchdog?.let { handler.removeCallbacks(it) }
+
                         val gameUrl = res.replace("\"", "").substringAfter("JUMP:")
                         tvStatus.text = "Step 2: Inside match board!"
                         webView.loadUrl(gameUrl)
                         waitFor17Fixtures()
-                    } else if (attempts >= 14) {
-                        // If stuck on Mahara for ~7 seconds, AUTO-SKIP to Next!
-                        val phone = numbersList.getOrElse(currentIndex) { "Account" }
-                        logSkippedAccount(phone, "Stuck on Mahara Launch")
                     } else {
+                        // Dispatch physical touch if coordinates returned
+                        if (res?.contains("TOUCH:") == true) {
+                            val clean = res.replace("\"", "").substringAfter("TOUCH:")
+                            val parts = clean.split(":")
+                            if (parts.size == 2) {
+                                val x = parts[0].toFloatOrNull() ?: 0f
+                                val y = parts[1].toFloatOrNull() ?: 0f
+                                if (x > 0 && y > 0) simulateHardwareTouch(x, y)
+                            }
+                        }
                         handler.postDelayed(this, 500L)
                     }
                 }
             }
         }
-        safeDelay(800L) { checkMahara.run() }
+        safeDelay(600L) { checkMahara.run() }
     }
 
     private fun waitFor17Fixtures() {
@@ -745,12 +788,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 4. NEXT
+    // 4. NEXT (Guaranteed Index Advance & Clean Reset)
     // ========================================================
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session..."
         isStepActive = false
-        handler.removeCallbacksAndMessages(null)
+        maharaWatchdog?.let { handler.removeCallbacks(it) }
 
         WebStorage.getInstance().deleteAllData()
 
@@ -760,7 +803,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (numbersList.isNotEmpty()) {
                     if (currentIndex < numbersList.size - 1) {
-                        currentIndex++
+                        currentIndex++ // Increments exactly ONCE
                     } else {
                         currentIndex = 0
                         saveData()
@@ -773,6 +816,11 @@ class MainActivity : AppCompatActivity() {
                 saveData()
                 updateUI()
                 webView.loadUrl("https://winpesa.ng")
+
+                // Directly schedule next login (never depends on flaky onPageFinished!)
+                if (isAutoRunning) {
+                    safeDelay(1600L) { runStep1_Login() }
+                }
             }
         }
     }
