@@ -48,7 +48,6 @@ class MainActivity : AppCompatActivity() {
     private var isStepActive = false
     private var speedMultiplier = 1.0f
 
-    // Data Saver: Blocks game pictures, thumbnails & banners to save bandwidth & run faster
     private var blockImages = false
 
     private var filePickTarget = "NUMBERS"
@@ -97,7 +96,6 @@ class MainActivity : AppCompatActivity() {
         s.loadWithOverviewMode = true
         s.cacheMode = WebSettings.LOAD_DEFAULT
 
-        // Data Saver configuration
         s.blockNetworkImage = blockImages
         s.loadsImagesAutomatically = !blockImages
 
@@ -135,8 +133,16 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed({ action() }, delayMs)
     }
 
+    // Dismisses promo popups and the "GOT IT!" cookie banner
     private fun dismissBanners() {
-        val js = "(function(){ Array.from(document.querySelectorAll('button,div,span,a')).forEach(e=>{ let t=(e.innerText||'').trim().toLowerCase(); if(t==='got it'||t==='accept'||t==='×'||t==='x') e.click(); }); })()"
+        val js = """
+            (function() {
+                Array.from(document.querySelectorAll('button, div, span, a')).forEach(e => {
+                    let t = (e.innerText||'').trim().toLowerCase();
+                    if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') e.click();
+                });
+            })();
+        """.trimIndent()
         webView.evaluateJavascript(js, null)
     }
 
@@ -185,7 +191,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // ⚙️ DATA MANAGEMENT MENU (Images, Speed, Skips, Loads)
+    // ⚙️ DATA MANAGEMENT MENU
     // ========================================================
     private fun showDataManagementMenu() {
         val imgLabel = if (blockImages) "🖼️ Game Images: BLOCKED (Data Saver ON)" else "🖼️ Game Images: ALLOWED (Normal)"
@@ -543,22 +549,40 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA
+    // 2. MAHARA (Indestructible Touch + Never-Give-Up Watcher)
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara..."
         webView.loadUrl(activeMaharaUrl)
 
-        var attempts = 0
+        var totalChecks = 0
         val checkMahara = object : Runnable {
             override fun run() {
-                attempts++
+                totalChecks++
+
                 val js = """
                     (function() {
-                        let f = document.querySelector('iframe');
-                        if (f && f.src && f.src.includes('aggrhub.com')) { window.location.href = f.src; return "JUMP"; }
-                        let p = Array.from(document.querySelectorAll('button, div, a')).find(e => (e.innerText||'').trim() === 'PLAY');
-                        if (p) { p.click(); return "PLAY"; }
+                        // Dismiss cookie banners & popups
+                        Array.from(document.querySelectorAll('button, div, span, a')).forEach(e => {
+                            let t = (e.innerText||'').trim().toLowerCase();
+                            if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') e.click();
+                        });
+
+                        // 1. If iframe exists, jump immediately
+                        let iframes = Array.from(document.querySelectorAll('iframe'));
+                        let aggr = iframes.find(f => f.src && f.src.includes('aggrhub.com'));
+                        if (aggr) { window.location.href = aggr.src; return "JUMP"; }
+
+                        // 2. Find and tap yellow PLAY button with full touch events
+                        let playBtn = Array.from(document.querySelectorAll('button, div, a')).find(e => (e.innerText||'').trim().toUpperCase() === 'PLAY');
+                        if (playBtn) {
+                            ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(name => {
+                                playBtn.dispatchEvent(new MouseEvent(name, { bubbles: true, cancelable: true, view: window }));
+                            });
+                            playBtn.click();
+                            if (playBtn.firstElementChild) playBtn.firstElementChild.click();
+                            return "PLAY_CLICKED";
+                        }
                         return "WAIT";
                     })();
                 """.trimIndent()
@@ -576,15 +600,23 @@ class MainActivity : AppCompatActivity() {
                                     if (count >= 17) {
                                         tvStatus.text = "Step 2: Matches ready!"
                                         if (isAutoRunning) safeDelay(getDelay(700L)) { runStep3_PickAndBet() }
-                                    } else if (drawAttempts < 25) {
-                                        handler.postDelayed(this, 400L)
+                                    } else if (drawAttempts < 35) {
+                                        handler.postDelayed(this, 500L)
+                                    } else {
+                                        // Auto-retry reload if network hung
+                                        runStep2_OpenMahara()
                                     }
                                 }
                             }
                         }
                         handler.postDelayed(checkDraws, 600L)
-                    } else if (attempts < 20) {
-                        handler.postDelayed(this, 400L)
+                    } else {
+                        // Never gives up: keeps polling until PLAY is tapped & game enters!
+                        if (totalChecks % 15 == 0) {
+                            // If stuck for 7 seconds, reload Mahara URL to refresh DOM
+                            webView.loadUrl(activeMaharaUrl)
+                        }
+                        handler.postDelayed(this, 500L)
                     }
                 }
             }
