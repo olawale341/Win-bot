@@ -7,6 +7,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.webkit.CookieManager
@@ -84,6 +86,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun getDelay(baseMs: Long): Long {
         return (baseMs / speedMultiplier).toLong().coerceAtLeast(150L)
+    }
+
+    // Hardware touch dispatch simulation directly onto screen coordinates
+    private fun simulateHardwareTouch(x: Float, y: Float) {
+        val now = SystemClock.uptimeMillis()
+        val density = resources.displayMetrics.density
+        val px = x * density
+        val py = y * density
+        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, px, py, 0)
+        val up = MotionEvent.obtain(now, now + 80, MotionEvent.ACTION_UP, px, py, 0)
+        webView.dispatchTouchEvent(down)
+        webView.dispatchTouchEvent(up)
+        down.recycle()
+        up.recycle()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -550,30 +566,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA (Crash-Proof Touch + Instant Entry)
+    // 2. MAHARA (Deep DOM Tap + Native Hardware Touch Integration)
     // ========================================================
     private fun runStep2_OpenMahara() {
-        tvStatus.text = "Step 2: Loading Mahara..."
+        tvStatus.text = "Step 2: Entering Mahara..."
         webView.loadUrl(activeMaharaUrl)
 
-        var totalChecks = 0
         val checkMahara = object : Runnable {
             override fun run() {
-                totalChecks++
-
                 val js = """
                     (function() {
-                        // Helper to safely click elements without throwing unhandled exceptions
-                        function safeTap(el) {
-                            if (!el) return;
-                            try { el.click(); } catch(e) {}
-                            try { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
-                        }
-
-                        // Dismiss cookie banners & popups
+                        // Dismiss popups & cookie banners
                         Array.from(document.querySelectorAll('button, div, span, a')).forEach(e => {
                             let t = (e.innerText||'').trim().toLowerCase();
-                            if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') safeTap(e);
+                            if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') {
+                                try { e.click(); } catch(err) {}
+                            }
                         });
 
                         // 1. If iframe exists, jump immediately
@@ -581,18 +589,23 @@ class MainActivity : AppCompatActivity() {
                         let aggr = iframes.find(f => f.src && (f.src.includes('aggrhub.com') || f.src.includes('soccer13') || f.src.includes('session=')));
                         if (aggr) { window.location.href = aggr.src; return "JUMP"; }
 
-                        // 2. Find and tap yellow PLAY button (both inner element and parent)
-                        let playCandidates = Array.from(document.querySelectorAll('*')).filter(el => {
+                        // 2. Target the yellow PLAY button (any button, div, a, or span with PLAY)
+                        let allPlay = Array.from(document.querySelectorAll('button, [role="button"], a, div')).filter(el => {
                             let t = (el.innerText || '').trim().toUpperCase();
-                            return t === 'PLAY' && el.children.length === 0;
+                            return t === 'PLAY' && el.offsetWidth > 40 && el.offsetHeight > 15;
                         });
 
-                        if (playCandidates.length > 0) {
-                            playCandidates.forEach(btn => {
-                                safeTap(btn);
-                                if (btn.parentElement) safeTap(btn.parentElement);
-                            });
-                            return "PLAY_TAPPED";
+                        if (allPlay.length > 0) {
+                            let btn = allPlay[allPlay.length - 1]; // Innermost element
+                            
+                            // Trigger all DOM click events
+                            try { btn.click(); } catch(e) {}
+                            let p = btn.closest('button, a, div[role="button"]');
+                            if (p) { try { p.click(); } catch(e) {} }
+
+                            // Return exact screen coordinates to Android for hardware touch!
+                            let r = btn.getBoundingClientRect();
+                            return "TOUCH:" + (r.left + r.width/2) + ":" + (r.top + r.height/2);
                         }
 
                         return "WAIT";
@@ -622,8 +635,20 @@ class MainActivity : AppCompatActivity() {
                         }
                         handler.postDelayed(checkDraws, 600L)
                     } else {
-                        // Keep tapping PLAY every 400ms until the game enters
-                        handler.postDelayed(this, 400L)
+                        // If coordinates returned, dispatch authentic Android hardware touch!
+                        if (res?.contains("TOUCH:") == true) {
+                            val clean = res.replace("\"", "").substringAfter("TOUCH:")
+                            val parts = clean.split(":")
+                            if (parts.size == 2) {
+                                val x = parts[0].toFloatOrNull() ?: 0f
+                                val y = parts[1].toFloatOrNull() ?: 0f
+                                if (x > 0 && y > 0) {
+                                    simulateHardwareTouch(x, y)
+                                }
+                            }
+                        }
+                        // Repeat check every 350ms until game enters
+                        handler.postDelayed(this, 350L)
                     }
                 }
             }
