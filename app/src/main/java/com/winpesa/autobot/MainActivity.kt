@@ -265,7 +265,7 @@ class MainActivity : AppCompatActivity() {
         saveData()
         tvStatus.text = "⚠️ Skipped: $entry"
         if (isAutoRunning) {
-            safeDelay(1200L) { runStep4_LogoutAndNext() }
+            safeDelay(1000L) { runStep4_LogoutAndNext() }
         }
     }
 
@@ -471,7 +471,7 @@ class MainActivity : AppCompatActivity() {
                 let p = document.querySelector('input[placeholder*="Phone"], input[type="tel"], input[name*="phone"]');
                 let pass = document.querySelector('input[placeholder*="Password"], input[type="password"]');
 
-                 if (p && pass) {
+                if (p && pass) {
                     setReact(p, '$phone'); setReact(pass, '$commonPassword');
                     setTimeout(() => {
                         let btn = Array.from(document.querySelectorAll('button, div[role="button"]')).find(b => {
@@ -550,25 +550,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA (The "Practice Neighbor" Precision Anchor)
+    // 2. MAHARA (Direct Play Tap + Auto-Skip if Stuck)
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Entering Mahara..."
         webView.loadUrl(activeMaharaUrl)
 
+        var attempts = 0
         val checkMahara = object : Runnable {
             override fun run() {
+                if (!isStepActive && !isAutoRunning) return
+                attempts++
+
                 val js = """
                     (function() {
-                        // 1. If game iframe already exists, jump immediately
                         let iframes = Array.from(document.querySelectorAll('iframe'));
                         let aggr = iframes.find(f => f.src && (f.src.includes('aggrhub.com') || f.src.includes('soccer13') || f.src.includes('session=')));
-                        if (aggr) { 
-                            window.location.href = aggr.src; 
-                            return "JUMP"; 
-                        }
+                        if (aggr) return "JUMP:" + aggr.src;
 
-                        // 2. Clear cookie banners
                         Array.from(document.querySelectorAll('button, div, span, a')).forEach(e => {
                             let t = (e.innerText||'').trim().toLowerCase();
                             if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') {
@@ -576,62 +575,63 @@ class MainActivity : AppCompatActivity() {
                             }
                         });
 
-                        // 3. THE PRACTICE NEIGHBOR ANCHOR:
-                        // Find the unique "PRACTICE" button on the modal
-                        let practiceBtn = Array.from(document.querySelectorAll('*')).find(el => {
-                            return (el.innerText || '').trim().toUpperCase() === 'PRACTICE';
+                        // Direct button search
+                        let playBtn = Array.from(document.querySelectorAll('button, [role="button"], a, div')).find(el => {
+                            let t = (el.innerText || '').trim().toUpperCase();
+                            return t === 'PLAY' && el.offsetWidth > 40;
                         });
 
-                        if (practiceBtn && practiceBtn.parentElement) {
-                            // Find the yellow PLAY button sitting in the EXACT same card container!
-                            let container = practiceBtn.parentElement;
-                            let playBtn = Array.from(container.querySelectorAll('*')).find(el => {
-                                let t = (el.innerText || '').trim().toUpperCase();
-                                return t === 'PLAY';
-                            });
-
-                            if (playBtn) {
-                                try { playBtn.click(); } catch(e) {}
-                                let p = playBtn.closest('button, [role="button"], a');
-                                if (p) { try { p.click(); } catch(e) {} }
-                                return "CLICKED_MODAL_PLAY";
-                            }
+                        if (playBtn) {
+                            try { playBtn.click(); } catch(e) {}
+                            let p = playBtn.closest('button, [role="button"], a');
+                            if (p) { try { p.click(); } catch(e) {} }
+                            return "PLAY_CLICKED";
                         }
-
                         return "WAIT_MODAL";
                     })();
                 """.trimIndent()
 
                 webView.evaluateJavascript(js) { res ->
-                    if (res?.contains("JUMP") == true) {
-                        tvStatus.text = "Step 2: Entering match board..."
-                        var drawAttempts = 0
-                        val checkDraws = object : Runnable {
-                            override fun run() {
-                                drawAttempts++
-                                val countJs = "(function(){ return Array.from(document.querySelectorAll('*')).filter(e => { let l = (e.innerText||'').trim().split('\\n').map(s=>s.trim()).filter(Boolean); return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1])); }).length; })()"
-                                webView.evaluateJavascript(countJs) { countStr ->
-                                    val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
-                                    if (count >= 17) {
-                                        tvStatus.text = "Step 2: Matches ready!"
-                                        if (isAutoRunning) safeDelay(getDelay(700L)) { runStep3_PickAndBet() }
-                                    } else if (drawAttempts < 35) {
-                                        handler.postDelayed(this, 500L)
-                                    } else {
-                                        runStep2_OpenMahara()
-                                    }
-                                }
-                            }
-                        }
-                        handler.postDelayed(checkDraws, 600L)
+                    if (res?.contains("JUMP:") == true) {
+                        val gameUrl = res.replace("\"", "").substringAfter("JUMP:")
+                        tvStatus.text = "Step 2: Inside match board!"
+                        webView.loadUrl(gameUrl)
+                        waitFor17Fixtures()
+                    } else if (attempts >= 14) {
+                        // If stuck on Mahara for ~7 seconds, AUTO-SKIP to Next!
+                        val phone = numbersList.getOrElse(currentIndex) { "Account" }
+                        logSkippedAccount(phone, "Stuck on Mahara Launch")
                     } else {
-                        // Poll smoothly every 500ms until the modal card is clicked & enters
                         handler.postDelayed(this, 500L)
                     }
                 }
             }
         }
-        safeDelay(600L) { checkMahara.run() }
+        safeDelay(800L) { checkMahara.run() }
+    }
+
+    private fun waitFor17Fixtures() {
+        var drawAttempts = 0
+        val checkDraws = object : Runnable {
+            override fun run() {
+                drawAttempts++
+                val countJs = "(function(){ return Array.from(document.querySelectorAll('*')).filter(e => { let l = (e.innerText||'').trim().split('\\n').map(s=>s.trim()).filter(Boolean); return l.length === 2 && l[0] === 'DRAW' && !isNaN(parseFloat(l[1])); }).length; })()"
+                webView.evaluateJavascript(countJs) { countStr ->
+                    val count = countStr?.replace("\"", "")?.toIntOrNull() ?: 0
+                    if (count >= 17) {
+                        tvStatus.text = "Step 2: All 17 matches confirmed!"
+                        if (isAutoRunning) safeDelay(getDelay(500L)) { runStep3_PickAndBet() }
+                    } else if (drawAttempts >= 20) {
+                        val phone = numbersList.getOrElse(currentIndex) { "Account" }
+                        logSkippedAccount(phone, "Fixtures Failed to Load")
+                    } else {
+                        tvStatus.text = "Loading matches ($count/17)..."
+                        handler.postDelayed(this, 500L)
+                    }
+                }
+            }
+        }
+        handler.postDelayed(checkDraws, 800L)
     }
 
     // ========================================================
