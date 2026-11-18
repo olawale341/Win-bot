@@ -133,13 +133,14 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed({ action() }, delayMs)
     }
 
-    // Dismisses promo popups and the "GOT IT!" cookie banner
     private fun dismissBanners() {
         val js = """
             (function() {
                 Array.from(document.querySelectorAll('button, div, span, a')).forEach(e => {
                     let t = (e.innerText||'').trim().toLowerCase();
-                    if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') e.click();
+                    if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') {
+                        try { e.click(); } catch(err) {}
+                    }
                 });
             })();
         """.trimIndent()
@@ -549,7 +550,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA (Indestructible Touch + Never-Give-Up Watcher)
+    // 2. MAHARA (Crash-Proof Touch + Instant Entry)
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Loading Mahara..."
@@ -562,27 +563,38 @@ class MainActivity : AppCompatActivity() {
 
                 val js = """
                     (function() {
+                        // Helper to safely click elements without throwing unhandled exceptions
+                        function safeTap(el) {
+                            if (!el) return;
+                            try { el.click(); } catch(e) {}
+                            try { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                        }
+
                         // Dismiss cookie banners & popups
                         Array.from(document.querySelectorAll('button, div, span, a')).forEach(e => {
                             let t = (e.innerText||'').trim().toLowerCase();
-                            if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') e.click();
+                            if (t.includes('got it') || t === 'accept' || t === '×' || t === 'x') safeTap(e);
                         });
 
                         // 1. If iframe exists, jump immediately
                         let iframes = Array.from(document.querySelectorAll('iframe'));
-                        let aggr = iframes.find(f => f.src && f.src.includes('aggrhub.com'));
+                        let aggr = iframes.find(f => f.src && (f.src.includes('aggrhub.com') || f.src.includes('soccer13') || f.src.includes('session=')));
                         if (aggr) { window.location.href = aggr.src; return "JUMP"; }
 
-                        // 2. Find and tap yellow PLAY button with full touch events
-                        let playBtn = Array.from(document.querySelectorAll('button, div, a')).find(e => (e.innerText||'').trim().toUpperCase() === 'PLAY');
-                        if (playBtn) {
-                            ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(name => {
-                                playBtn.dispatchEvent(new MouseEvent(name, { bubbles: true, cancelable: true, view: window }));
+                        // 2. Find and tap yellow PLAY button (both inner element and parent)
+                        let playCandidates = Array.from(document.querySelectorAll('*')).filter(el => {
+                            let t = (el.innerText || '').trim().toUpperCase();
+                            return t === 'PLAY' && el.children.length === 0;
+                        });
+
+                        if (playCandidates.length > 0) {
+                            playCandidates.forEach(btn => {
+                                safeTap(btn);
+                                if (btn.parentElement) safeTap(btn.parentElement);
                             });
-                            playBtn.click();
-                            if (playBtn.firstElementChild) playBtn.firstElementChild.click();
-                            return "PLAY_CLICKED";
+                            return "PLAY_TAPPED";
                         }
+
                         return "WAIT";
                     })();
                 """.trimIndent()
@@ -603,7 +615,6 @@ class MainActivity : AppCompatActivity() {
                                     } else if (drawAttempts < 35) {
                                         handler.postDelayed(this, 500L)
                                     } else {
-                                        // Auto-retry reload if network hung
                                         runStep2_OpenMahara()
                                     }
                                 }
@@ -611,12 +622,8 @@ class MainActivity : AppCompatActivity() {
                         }
                         handler.postDelayed(checkDraws, 600L)
                     } else {
-                        // Never gives up: keeps polling until PLAY is tapped & game enters!
-                        if (totalChecks % 15 == 0) {
-                            // If stuck for 7 seconds, reload Mahara URL to refresh DOM
-                            webView.loadUrl(activeMaharaUrl)
-                        }
-                        handler.postDelayed(this, 500L)
+                        // Keep tapping PLAY every 400ms until the game enters
+                        handler.postDelayed(this, 400L)
                     }
                 }
             }
