@@ -42,7 +42,9 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val numbersList = mutableListOf<String>()
     private val patternsList = mutableListOf<String>()
-    private val skippedAccountsList = mutableListOf<String>()
+    
+    // Stores skipped accounts with format: "phone|pattern|reason|originalAccountNum"
+    private val skippedDataList = mutableListOf<String>()
 
     private var currentIndex = 0
     private var commonPassword = "YourDefaultPassword123"
@@ -51,7 +53,6 @@ class MainActivity : AppCompatActivity() {
     private var speedMultiplier = 1.0f
     private var blockImages = false
 
-    // Independent watchdogs that guarantee automatic skips if either step hangs
     private var loginWatchdog: Runnable? = null
     private var maharaWatchdog: Runnable? = null
 
@@ -220,7 +221,8 @@ class MainActivity : AppCompatActivity() {
             "🔑 Set Common Password",
             "⚡ Set Speed (${speedMultiplier}x)",
             imgLabel,
-            "⚠️ Skipped Accounts (${skippedAccountsList.size})",
+            "🔄 Re-run All Skipped Accounts (${skippedDataList.size})",
+            "⚠️ View Skipped Accounts (${skippedDataList.size})",
             "🔢 Jump to Specific Account #",
             "🔄 Reset Progress to Account #1",
             "🗑️ WIPE ALL (Clear Numbers, Patterns & Reset)"
@@ -236,13 +238,94 @@ class MainActivity : AppCompatActivity() {
                     4 -> showPasswordDialog()
                     5 -> showSpeedSelectionDialog()
                     6 -> toggleImageBlocking()
-                    7 -> showSkippedAccountsDialog()
-                    8 -> showJumpToAccountDialog()
-                    9 -> { currentIndex = 0; saveData(); updateUI(); Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show() }
-                    10 -> confirmWipeAllData()
+                    7 -> rerunSkippedAccounts()
+                    8 -> showSkippedAccountsDialog()
+                    9 -> showJumpToAccountDialog()
+                    10 -> { currentIndex = 0; saveData(); updateUI(); Toast.makeText(this, "Reset to #1", Toast.LENGTH_SHORT).show() }
+                    11 -> confirmWipeAllData()
                 }
             }
             .setNegativeButton("Close", null).show()
+    }
+
+    // Re-runs only the failed accounts in sequence
+    private fun rerunSkippedAccounts() {
+        if (skippedDataList.isEmpty()) {
+            Toast.makeText(this, "No skipped accounts to re-run!", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val count = skippedDataList.size
+        AlertDialog.Builder(this)
+            .setTitle("🔄 Re-run $count Skipped Accounts?")
+            .setMessage("This will load only the $count failed accounts (like #59, #356) and their exact patterns so the bot can retry them one by one. Continue?")
+            .setPositiveButton("Yes, Start Re-run") { _, _ ->
+            val newNumbers = mutableListOf<String>()
+            val newPatterns = mutableListOf<String>()
+            for (item in skippedDataList) {
+                val parts = item.split("|")
+                if (parts.isNotEmpty()) newNumbers.add(parts[0])
+                if (parts.size >= 2) newPatterns.add(parts[1])
+            }
+
+            numbersList.clear()
+            numbersList.addAll(newNumbers)
+
+            patternsList.clear()
+            patternsList.addAll(newPatterns)
+
+            skippedDataList.clear()
+            currentIndex = 0
+
+            saveData()
+            updateUI()
+
+            tvStatus.text = "Loaded $count skipped accounts! Starting..."
+            if (!isAutoRunning) {
+                toggleAutoRun()
+            } else {
+                runStep1_Login()
+            }
+        }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun showSkippedAccountsDialog() {
+        val count = skippedDataList.size
+        val msg = if (count == 0) {
+            "No accounts have been skipped! All accounts have succeeded."
+        } else {
+            val lines = skippedDataList.map { item ->
+                val p = item.split("|")
+                val phone = p.getOrElse(0) { "" }
+                val reason = p.getOrElse(2) { "Unknown" }
+                val origNum = p.getOrElse(3) { "?" }
+                "Acc #$origNum: $phone ($reason)"
+            }
+            "Total Skipped: $count\n\n" + lines.joinToString("\n")
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("⚠️ Skipped Accounts ($count)")
+            .setMessage(msg)
+            .setPositiveButton("OK", null)
+            .setNeutralButton("Clear List") { _, _ ->
+                skippedDataList.clear()
+                saveData()
+                updateUI()
+                Toast.makeText(this, "Skipped list cleared!", Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private fun logSkippedAccount(phone: String, reason: String) {
+        val pat = if (patternsList.isNotEmpty()) patternsList[currentIndex % patternsList.size] else ""
+        val entry = "$phone|$pat|$reason|${currentIndex + 1}"
+        skippedDataList.add(entry)
+        saveData()
+        updateUI()
+        tvStatus.text = "⚠️ Skipped #${currentIndex + 1}: $phone ($reason)"
     }
 
     private fun toggleImageBlocking() {
@@ -252,35 +335,6 @@ class MainActivity : AppCompatActivity() {
         saveData()
         val status = if (blockImages) "Images BLOCKED: Ultra Fast & Low Data Usage!" else "Images ALLOWED: Normal mode"
         Toast.makeText(this, status, Toast.LENGTH_SHORT).show()
-    }
-
-    private fun showSkippedAccountsDialog() {
-        val count = skippedAccountsList.size
-        val msg = if (count == 0) {
-            "No accounts have been skipped! All accounts have succeeded."
-        } else {
-            "Total Skipped: $count\n\n" + skippedAccountsList.joinToString("\n")
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle("⚠️ Skipped Accounts ($count)")
-            .setMessage(msg)
-            .setPositiveButton("OK", null)
-            .setNeutralButton("Clear List") { _, _ ->
-                skippedAccountsList.clear()
-                saveData()
-                updateUI()
-                Toast.makeText(this, "Skipped list cleared!", Toast.LENGTH_SHORT).show()
-            }
-            .show()
-    }
-
-    private fun logSkippedAccount(phone: String, reason: String) {
-        val entry = "Acc #${currentIndex + 1}: $phone ($reason)"
-        skippedAccountsList.add(entry)
-        saveData()
-        updateUI()
-        tvStatus.text = "⚠️ Skipped: $entry"
     }
 
     private fun showSpeedSelectionDialog() {
@@ -324,7 +378,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Yes, Wipe All") { _, _ ->
                 numbersList.clear()
                 patternsList.clear()
-                skippedAccountsList.clear()
+                skippedDataList.clear()
                 currentIndex = 0
                 val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
                 prefs.edit().clear().apply()
@@ -427,7 +481,7 @@ class MainActivity : AppCompatActivity() {
         prefs.edit()
             .putString("numbers", numbersList.joinToString("\n"))
             .putString("patterns", patternsList.joinToString("\n"))
-            .putString("skipped", skippedAccountsList.joinToString("\n"))
+            .putString("skipped", skippedDataList.joinToString("\n"))
             .putString("password", commonPassword)
             .putInt("index", currentIndex)
             .putFloat("speed_multiplier", speedMultiplier)
@@ -449,13 +503,13 @@ class MainActivity : AppCompatActivity() {
         if (pats.isNotEmpty()) { patternsList.clear(); patternsList.addAll(pats.split("\n")) }
 
         val skips = prefs.getString("skipped", "") ?: ""
-        if (skips.isNotEmpty()) { skippedAccountsList.clear(); skippedAccountsList.addAll(skips.split("\n")) }
+        if (skips.isNotEmpty()) { skippedDataList.clear(); skippedDataList.addAll(skips.split("\n").filter { it.isNotEmpty() }) }
 
         updateUI()
     }
 
     // ========================================================
-    // 1. LOGIN (With 8.5s Watchdog Auto-Skip if Stuck)
+    // 1. LOGIN (Patient Input & 12-Second Timeout Watchdog)
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -468,18 +522,17 @@ class MainActivity : AppCompatActivity() {
         val phone = numbersList[currentIndex]
         tvStatus.text = "Step 1: Logging in $phone..."
 
-        // Cancel previous login watchdog
         loginWatchdog?.let { handler.removeCallbacks(it) }
 
-        // Start 8.5s Login Watchdog: If login hangs, auto-skip without freezing
+        // 12-Second Login Watchdog
         loginWatchdog = Runnable {
             if (isAutoRunning) {
-                tvStatus.text = "⚠️ Login stuck. Auto-skipping $phone..."
+                tvStatus.text = "⚠️ Login stuck (12s). Auto-skipping $phone..."
                 logSkippedAccount(phone, "Login Timeout")
                 runStep4_LogoutAndNext()
             }
         }
-        handler.postDelayed(loginWatchdog!!, 8500L)
+        handler.postDelayed(loginWatchdog!!, 12000L)
 
         val script = """
             (function() {
@@ -522,7 +575,6 @@ class MainActivity : AppCompatActivity() {
             override fun run() {
                 webView.evaluateJavascript(script) { res ->
                     if (res?.contains("ALREADY_LOGGED") == true) {
-                        // SUCCESS: Cancel login watchdog!
                         loginWatchdog?.let { handler.removeCallbacks(it) }
                         tvStatus.text = "Step 1: Logged in!"
                         if (isAutoRunning) safeDelay(getDelay(800L)) { runStep2_OpenMahara() }
@@ -545,7 +597,6 @@ class MainActivity : AppCompatActivity() {
 
                                 webView.evaluateJavascript(checkJs) { status ->
                                     if (status?.contains("LOGGED") == true) {
-                                        // SUCCESS: Cancel login watchdog!
                                         loginWatchdog?.let { handler.removeCallbacks(it) }
                                         tvStatus.text = "Step 1: Logged in $phone!"
                                         if (isAutoRunning) safeDelay(getDelay(900L)) { runStep2_OpenMahara() }
@@ -637,7 +688,6 @@ class MainActivity : AppCompatActivity() {
 
                 webView.evaluateJavascript(js) { res ->
                     if (res?.contains("JUMP:") == true) {
-                        // SUCCESS: Cancel Mahara watchdog!
                         maharaWatchdog?.let { handler.removeCallbacks(it) }
 
                         val gameUrl = res.replace("\"", "").substringAfter("JUMP:")
