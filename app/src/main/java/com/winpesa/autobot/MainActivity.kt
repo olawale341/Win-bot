@@ -51,7 +51,8 @@ class MainActivity : AppCompatActivity() {
     private var speedMultiplier = 1.0f
     private var blockImages = false
 
-    // Dedicated watchdog for Mahara only
+    // Independent watchdogs that guarantee automatic skips if either step hangs
+    private var loginWatchdog: Runnable? = null
     private var maharaWatchdog: Runnable? = null
 
     private var filePickTarget = "NUMBERS"
@@ -167,6 +168,7 @@ class MainActivity : AppCompatActivity() {
         if (isAutoRunning) {
             isAutoRunning = false
             isStepActive = false
+            loginWatchdog?.let { handler.removeCallbacks(it) }
             maharaWatchdog?.let { handler.removeCallbacks(it) }
             handler.removeCallbacksAndMessages(null)
             btnAutoRun.text = "▶️ AUTO"
@@ -324,7 +326,7 @@ class MainActivity : AppCompatActivity() {
                 patternsList.clear()
                 skippedAccountsList.clear()
                 currentIndex = 0
-                val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
+                val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
                 prefs.edit().clear().apply()
                 saveData(); updateUI()
                 tvStatus.text = "All data cleared! Ready for new batch."
@@ -421,7 +423,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveData() {
-        val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
+        val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
         prefs.edit()
             .putString("numbers", numbersList.joinToString("\n"))
             .putString("patterns", patternsList.joinToString("\n"))
@@ -434,7 +436,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadPersistedData() {
-        val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
+        val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
         commonPassword = prefs.getString("password", "YourDefaultPassword123") ?: "YourDefaultPassword123"
         currentIndex = prefs.getInt("index", 0)
         speedMultiplier = prefs.getFloat("speed_multiplier", 1.0f).coerceIn(0.2f, 5.0f)
@@ -453,7 +455,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 1. LOGIN (Patient & Reliable - No Premature Timeout)
+    // 1. LOGIN (With 8.5s Watchdog Auto-Skip if Stuck)
     // ========================================================
     private fun runStep1_Login() {
         if (numbersList.isEmpty()) {
@@ -465,6 +467,19 @@ class MainActivity : AppCompatActivity() {
         isStepActive = true
         val phone = numbersList[currentIndex]
         tvStatus.text = "Step 1: Logging in $phone..."
+
+        // Cancel previous login watchdog
+        loginWatchdog?.let { handler.removeCallbacks(it) }
+
+        // Start 8.5s Login Watchdog: If login hangs, auto-skip without freezing
+        loginWatchdog = Runnable {
+            if (isAutoRunning) {
+                tvStatus.text = "⚠️ Login stuck. Auto-skipping $phone..."
+                logSkippedAccount(phone, "Login Timeout")
+                runStep4_LogoutAndNext()
+            }
+        }
+        handler.postDelayed(loginWatchdog!!, 8500L)
 
         val script = """
             (function() {
@@ -507,6 +522,8 @@ class MainActivity : AppCompatActivity() {
             override fun run() {
                 webView.evaluateJavascript(script) { res ->
                     if (res?.contains("ALREADY_LOGGED") == true) {
+                        // SUCCESS: Cancel login watchdog!
+                        loginWatchdog?.let { handler.removeCallbacks(it) }
                         tvStatus.text = "Step 1: Logged in!"
                         if (isAutoRunning) safeDelay(getDelay(800L)) { runStep2_OpenMahara() }
                     } else if (res?.contains("SUBMITTED") == true) {
@@ -528,12 +545,16 @@ class MainActivity : AppCompatActivity() {
 
                                 webView.evaluateJavascript(checkJs) { status ->
                                     if (status?.contains("LOGGED") == true) {
+                                        // SUCCESS: Cancel login watchdog!
+                                        loginWatchdog?.let { handler.removeCallbacks(it) }
                                         tvStatus.text = "Step 1: Logged in $phone!"
                                         if (isAutoRunning) safeDelay(getDelay(900L)) { runStep2_OpenMahara() }
                                     } else if (status?.contains("ERR_PASSWORD") == true) {
+                                        loginWatchdog?.let { handler.removeCallbacks(it) }
                                         logSkippedAccount(phone, "Incorrect Password")
                                         if (isAutoRunning) safeDelay(800L) { runStep4_LogoutAndNext() }
                                     } else if (status?.contains("ERR_UNREGISTERED") == true) {
+                                        loginWatchdog?.let { handler.removeCallbacks(it) }
                                         logSkippedAccount(phone, "Number Not Registered")
                                         if (isAutoRunning) safeDelay(800L) { runStep4_LogoutAndNext() }
                                     } else if (status?.contains("REFILL_NEEDED") == true) {
@@ -555,7 +576,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ========================================================
-    // 2. MAHARA (7-Second Watchdog: Auto-Skips on Mahara Timeout ONLY)
+    // 2. MAHARA (With 7.0s Watchdog Auto-Skip if Stuck)
     // ========================================================
     private fun runStep2_OpenMahara() {
         tvStatus.text = "Step 2: Entering Mahara..."
@@ -563,7 +584,7 @@ class MainActivity : AppCompatActivity() {
 
         maharaWatchdog?.let { handler.removeCallbacks(it) }
 
-        // Start 7.0s Watchdog: If Mahara stalls, marks "Mahara Timeout" & forces NEXT!
+        // 7.0s Mahara Watchdog
         maharaWatchdog = Runnable {
             if (isAutoRunning) {
                 val phone = numbersList.getOrElse(currentIndex) { "Account" }
@@ -616,6 +637,7 @@ class MainActivity : AppCompatActivity() {
 
                 webView.evaluateJavascript(js) { res ->
                     if (res?.contains("JUMP:") == true) {
+                        // SUCCESS: Cancel Mahara watchdog!
                         maharaWatchdog?.let { handler.removeCallbacks(it) }
 
                         val gameUrl = res.replace("\"", "").substringAfter("JUMP:")
@@ -781,6 +803,7 @@ class MainActivity : AppCompatActivity() {
     private fun runStep4_LogoutAndNext() {
         tvStatus.text = "Step 4: Clearing session..."
         isStepActive = false
+        loginWatchdog?.let { handler.removeCallbacks(it) }
         maharaWatchdog?.let { handler.removeCallbacks(it) }
 
         WebStorage.getInstance().deleteAllData()
