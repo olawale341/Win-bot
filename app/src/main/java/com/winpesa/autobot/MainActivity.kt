@@ -51,7 +51,7 @@ class MainActivity : AppCompatActivity() {
     private var speedMultiplier = 1.0f
     private var blockImages = false
 
-    // Watchdog for Mahara only
+    // Dedicated watchdog for Mahara only
     private var maharaWatchdog: Runnable? = null
 
     private var filePickTarget = "NUMBERS"
@@ -324,7 +324,7 @@ class MainActivity : AppCompatActivity() {
                 patternsList.clear()
                 skippedAccountsList.clear()
                 currentIndex = 0
-                val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
+                val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
                 prefs.edit().clear().apply()
                 saveData(); updateUI()
                 tvStatus.text = "All data cleared! Ready for new batch."
@@ -421,7 +421,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveData() {
-        val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
+        val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
         prefs.edit()
             .putString("numbers", numbersList.joinToString("\n"))
             .putString("patterns", patternsList.joinToString("\n"))
@@ -434,7 +434,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadPersistedData() {
-        val prefs = getSharedPreferences("winpesa_bot", MODE_PRIVATE)
+        val prefs = getSharedPreferences("winpesa_touchbot", MODE_PRIVATE)
         commonPassword = prefs.getString("password", "YourDefaultPassword123") ?: "YourDefaultPassword123"
         currentIndex = prefs.getInt("index", 0)
         speedMultiplier = prefs.getFloat("speed_multiplier", 1.0f).coerceIn(0.2f, 5.0f)
@@ -539,7 +539,6 @@ class MainActivity : AppCompatActivity() {
                                     } else if (status?.contains("REFILL_NEEDED") == true) {
                                         handler.postDelayed({ runStep1_Login() }, 500L)
                                     } else {
-                                        // Patiently waits for login without skipping
                                         handler.postDelayed(this, 500L)
                                     }
                                 }
@@ -547,7 +546,6 @@ class MainActivity : AppCompatActivity() {
                         }
                         handler.postDelayed(verify, 700L)
                     } else {
-                        // Keeps waiting for login modal to appear
                         handler.postDelayed(this, 400L)
                     }
                 }
@@ -563,7 +561,6 @@ class MainActivity : AppCompatActivity() {
         tvStatus.text = "Step 2: Entering Mahara..."
         webView.loadUrl(activeMaharaUrl)
 
-        // Cancel any previous watchdog
         maharaWatchdog?.let { handler.removeCallbacks(it) }
 
         // Start 7.0s Watchdog: If Mahara stalls, marks "Mahara Timeout" & forces NEXT!
@@ -572,7 +569,7 @@ class MainActivity : AppCompatActivity() {
                 val phone = numbersList.getOrElse(currentIndex) { "Account" }
                 tvStatus.text = "⚠️ Mahara Timeout. Forcing NEXT for $phone..."
                 logSkippedAccount(phone, "Mahara Timeout")
-                runStep4_LogoutAndNext() // Force Next!
+                runStep4_LogoutAndNext()
             }
         }
         handler.postDelayed(maharaWatchdog!!, 7000L)
@@ -619,7 +616,6 @@ class MainActivity : AppCompatActivity() {
 
                 webView.evaluateJavascript(js) { res ->
                     if (res?.contains("JUMP:") == true) {
-                        // SUCCESS: Cancel watchdog!
                         maharaWatchdog?.let { handler.removeCallbacks(it) }
 
                         val gameUrl = res.replace("\"", "").substringAfter("JUMP:")
@@ -636,7 +632,6 @@ class MainActivity : AppCompatActivity() {
                                 if (x > 0 && y > 0) simulateHardwareTouch(x, y)
                             }
                         }
-                        // Keep checking until watchdog triggers or game enters
                         handler.postDelayed(this, 500L)
                     }
                 }
